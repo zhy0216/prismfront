@@ -3,6 +3,9 @@
   "extends": "//",
   "linter": {
     "rules": {
+      "suspicious": {
+        "noThenProperty": "off"
+      },
       "style": {
         "noRestrictedGlobals": {
           "level": "error",

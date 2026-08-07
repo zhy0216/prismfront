@@ -20,7 +20,8 @@
     "boundaries": "bunx turbo boundaries",
     "test": "bunx turbo test",
     "spike:colyseus": "cd apps/server && bun run spike",
-    "spike:client": "cd apps/client && bun run spike"
+    "spike:client": "cd apps/client && bun run spike",
+    "ir:print": "bun run apps/cli/src/ir/print.ts"
   },
   "devDependencies": {
     "typescript": "7.0.2",

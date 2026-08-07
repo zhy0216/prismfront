@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./tools": "./src/tools/index.ts",
+    "./tools/examples": "./src/tools/examples.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
