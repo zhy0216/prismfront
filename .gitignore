@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+
+# 构建产物（内部包不构建；只有 apps 与 cards 的 ir:build 产出 dist/）
+dist/
+
+# Turborepo 本地缓存与日志
+.turbo/
+
+# 测试覆盖率与 sim 报告
+coverage/
+reports/
+
+# ir:build 同时写入客户端的生成物（架构文档 §5.2），由构建重新产出
+apps/client/src/generated/
+
+# 环境变量
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 操作系统
+.DS_Store
+*.log
+
+# 注意：bun.lock 是文本锁文件，**必须进版本库**（架构文档 §2.1），不要在此忽略它。

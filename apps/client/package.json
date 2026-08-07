@@ -1,0 +1,22 @@
+{
+  "name": "@prismfront/client",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@prismfront/shared": "workspace:*",
+    "phaser": "catalog:client",
+    "@colyseus/sdk": "catalog:client"
+  },
+  "devDependencies": {
+    "vite": "catalog:client"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "bun test",
+    "spike": "bunx --bun vite"
+  }
+}

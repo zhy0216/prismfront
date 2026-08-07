@@ -54,7 +54,7 @@ M0 ── M1 ── M2 ── M3 ── M4 ── M5 ── M6 ── M7 ── 
 
 | M | 名称 | 产出 | 验收命令 | 估算 | 状态 |
 |---|---|---|---|---|---|
-| [M0](./M00-工程骨架与选型验证.md) | 工程骨架与选型验证 | 8 包骨架、turbo、CI、**技术 spike** | `bunx turbo typecheck lint boundaries` | 1–1.5d | ☐ |
+| [M0](./done/M00-工程骨架与选型验证.md) | 工程骨架与选型验证 | 8 包骨架、turbo、CI、**技术 spike** | `bunx turbo typecheck lint` + `bunx turbo boundaries` | 1–1.5d | ✅ |
 | [M1](./M01-IR权威类型与builder.md) | IR 权威类型与 builder | `packages/ir` | `bun test --filter @prismfront/ir` | 2–3d | ☐ |
 | [M2](./M02-引擎内核I-状态与结算骨架.md) | 引擎内核 I：状态与结算骨架 | 状态/RNG/结算栈/事件流 | 确定性 + 序列化往返测试 | 3–4d | ☐ |
 | [M3](./M03-引擎内核II-回合与同时结算.md) | 引擎内核 II：回合与同时结算 ★ | v2/v2.1 状态机、战斗 | 战斗边界四测 | 4–6d | ☐ |
@@ -76,7 +76,7 @@ M0 ── M1 ── M2 ── M3 ── M4 ── M5 ── M6 ── M7 ── 
 
 如果明天开工，前五天的顺序是：
 
-- [ ] **D1**：[M0](./M00-工程骨架与选型验证.md) 全部（骨架 + CI + 三个 spike）。
+- [ ] **D1**：[M0](./done/M00-工程骨架与选型验证.md) 全部（骨架 + CI + 三个 spike）。
       **当天必须拿到 Colyseus×Bun 的结论**（[决策 #1](./决策待办.md) 阻塞在这里）。
 - [ ] **D2–D3**：[M1](./M01-IR权威类型与builder.md)（IR 类型合并 + 规范一致性清理 + builder + L1/L2 校验）。
 - [ ] **D4–D5**：[M2](./M02-引擎内核I-状态与结算骨架.md) 开头（状态模型 + RNG + 结算栈骨架），

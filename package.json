@@ -1,0 +1,30 @@
+{
+  "name": "prismfront",
+  "private": true,
+  "packageManager": "bun@1.3.14",
+  "workspaces": {
+    "packages": ["packages/*", "apps/*"],
+    "catalog": {
+      "typescript": "7.0.2",
+      "@biomejs/biome": "2.5.7",
+      "turbo": "2.10.8"
+    },
+    "catalogs": {
+      "client": { "phaser": "4.0.0", "vite": "8.2.1", "@colyseus/sdk": "0.17.43" },
+      "server": { "colyseus": "0.17.10", "@colyseus/bun-websockets": "0.17.13", "zod": "4.4.3" }
+    }
+  },
+  "scripts": {
+    "typecheck": "bunx turbo typecheck",
+    "lint": "bunx turbo lint",
+    "boundaries": "bunx turbo boundaries",
+    "test": "bunx turbo test",
+    "spike:colyseus": "cd apps/server && bun run spike",
+    "spike:client": "cd apps/client && bun run spike"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "@biomejs/biome": "2.5.7",
+    "turbo": "2.10.8"
+  }
+}

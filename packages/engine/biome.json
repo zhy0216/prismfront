@@ -1,0 +1,76 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+  "extends": "//",
+  "linter": {
+    "rules": {
+      "style": {
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "Bun": "架构 §2.2 禁令 5：packages/* 必须运行时中立，不得使用 Bun.* 全局。Bun 只出现在 apps/*。",
+              "Date": "架构 §6.1：引擎必须确定性且不读时间。需要时间就把它放进 state，由调用方喂进来。",
+              "console": "架构 §6.1：引擎不做 I/O。诊断信息走返回的事件流，不走 console。",
+              "process": "架构 §6.1：引擎运行时中立，不得读进程环境或退出进程。"
+            }
+          }
+        },
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "patterns": [
+              {
+                "group": ["bun", "bun:*"],
+                "message": "架构 §2.2 禁令 5：packages/* 不得导入 bun 内置模块。只有测试文件（*.test.ts / __tests__/）可用 bun:test。"
+              },
+              {
+                "group": ["colyseus", "colyseus.js", "@colyseus/*", "phaser", "vite", "zod"],
+                "message": "架构 §2.2 禁令 2：ir / engine / cards 等 packages/* 不得依赖 colyseus、phaser 或任何 I/O 库。turbo boundaries 的 tag deny 只对 workspace 内部包生效，外部 npm 包必须由这条 lint 兜底。"
+              }
+            ]
+          }
+        }
+      },
+      "nursery": {
+        "noJsRestrictedProperties": {
+          "level": "error",
+          "options": {
+            "entries": [
+              {
+                "object": "Math",
+                "property": "random",
+                "message": "架构 §6.1：引擎必须确定性。用状态里的 RngState + nextInt（M2 落地），不要用 Math.random。noRestrictedGlobals 只能禁裸全局标识符，Math.random 是成员表达式，必须走这条规则。"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/__tests__/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["bun", "bun:*", "!bun:test"],
+                    "message": "架构 §2.2 禁令 5：测试文件只放行 bun:test，其余 bun 内置模块一律禁止。"
+                  },
+                  {
+                    "group": ["colyseus", "colyseus.js", "@colyseus/*", "phaser", "vite", "zod"],
+                    "message": "架构 §2.2 禁令 2：ir / engine / cards 等 packages/* 不得依赖 colyseus、phaser 或任何 I/O 库。turbo boundaries 的 tag deny 只对 workspace 内部包生效，外部 npm 包必须由这条 lint 兜底。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

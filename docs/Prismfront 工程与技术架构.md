@@ -48,7 +48,7 @@ tags: prismfront, 架构, monorepo, turborepo, bun, typescript, phaser, colyseus
 | 客户端构建 | `vite` | 8.2.1 | 由 `bun run vite` 驱动 |
 | 联机服务端 | `colyseus` | 0.17.10 | |
 | Bun 传输层 | `@colyseus/bun-websockets` | 0.17.13 | 依赖 `bun-serve-express@2` + `@colyseus/core@^0.17.41` |
-| 联机客户端 | `colyseus.js` | 0.16.22 | 依赖 `@colyseus/schema@^3` ← **裂口在这里，见 §1.2** |
+| 联机客户端 | `@colyseus/sdk` | 0.17.43 | 依赖 `@colyseus/schema@^4.0.7`，与服务端同 major ← **M0 spike 修正，见 §1.2 风险 A** |
 | 校验 | `zod` | 4.4.3 | 只用于**服务端入口**校验外部输入，不进 engine |
 | Lint/Format | `@biomejs/biome` | 2.5.7 | 单二进制，省掉 ESLint+Prettier 两套配置 |
 
@@ -68,7 +68,7 @@ tags: prismfront, 架构, monorepo, turborepo, bun, typescript, phaser, colyseus
       "turbo": "2.10.8"
     },
     "catalogs": {
-      "client": { "phaser": "4.0.0", "vite": "8.2.1", "colyseus.js": "0.16.22" },
+      "client": { "phaser": "4.0.0", "vite": "8.2.1", "@colyseus/sdk": "0.17.43" },
       "server": { "colyseus": "0.17.10", "@colyseus/bun-websockets": "0.17.13", "zod": "4.4.3" }
     }
   }
@@ -80,10 +80,30 @@ tags: prismfront, 架构, monorepo, turborepo, bun, typescript, phaser, colyseus
 
 ### 1.2 三个必须在 M0 拍板的选型风险
 
-**风险 A（阻塞级）：Colyseus 服务端与官方浏览器 SDK 存在 schema 大版本裂口。**
+> **【M0/S1 spike 回填 · 2026-08-07】风险 A 已消除，但消除方式与本节原先的设想不同。**
+>
+> 本节原先的前提——「官方浏览器 SDK `colyseus.js` 的 latest 停在 0.16.22」——**是错的**。
+> `colyseus.js` 是 **0.16 线的旧包名**；0.17 线的官方浏览器 SDK 改名为 **`@colyseus/sdk`**
+> （`colyseus@0.17.10` 自己的 `devDependencies` 里写的就是 `@colyseus/sdk@^0.17.39`）。
+>
+> 实测：`colyseus.js@0.16.22` 连 0.17 服务端确实开箱即挂，但**挂的地方与 schema 无关**，
+> 是 matchmaking 座位预定的 JSON 信封在 0.16→0.17 之间变了
+> （0.17 返回扁平 `{name, sessionId, roomId, processId}`，0.16 期待嵌套 `{room: {...}, sessionId}`），
+> 报错是 ``TypeError: undefined is not an object (evaluating 'response.room.name')``。
+>
+> **处置：`catalogs.client` 已改为 `@colyseus/sdk@0.17.43`。** 它依赖 `@colyseus/schema@^4.0.7`，
+> 与服务端 `@colyseus/core` 同 major —— **schema 3/4 裂口从依赖层面根除**，
+> `bun install` 的 `incorrect peer dependency` 警告随之消失，也不需要任何适配层。
+> 这是**向前修**，不是下面「出路排序」里的任何一条退路。
+>
+> 决策 #1「不使用 Schema」**仍然成立且仍是首选**——它的价值是让联机层可替换，
+> 而不只是躲版本裂口。spike 里 `assert(room.serializerId === "none")` 是这条不变量的
+> 机器可验证哨兵（实测：改成 `setState()` 它当场变红）。验收命令 `bun run spike:colyseus`。
 
-实测：`colyseus@0.17.10` → `@colyseus/core@0.17.47` 把 `@colyseus/schema@^4.0.7` 列为
-**必需 peer**；而官方浏览器 SDK `colyseus.js` 的 `latest` 仍停在 `0.16.22`，其依赖是
+**风险 A（阻塞级 · 已消除）：Colyseus 服务端与官方浏览器 SDK 存在 schema 大版本裂口。**
+
+原始判断：`colyseus@0.17.10` → `@colyseus/core@0.17.47` 把 `@colyseus/schema@^4.0.7` 列为
+**必需 peer**；而当时以为官方浏览器 SDK `colyseus.js` 的 `latest` 停在 `0.16.22`，其依赖是
 `@colyseus/schema@^3.0.0`。schema 3 与 4 是序列化器的大版本差异，握手能否互通**未经验证**。
 
 **但我们的架构天生绕得开它。**《框架设计》§7.1 已论证棋盘不进 Schema，Schema 只承载
@@ -100,7 +120,24 @@ tags: prismfront, 架构, monorepo, turborepo, bun, typescript, phaser, colyseus
 无论走哪条，`apps/server` 必须把 Colyseus API 包在 `src/transport/` 一层之内，
 房间逻辑只依赖我们自己的 `Transport` 接口。这样风险 A 无论怎么演化，都只影响一个目录。
 
-**风险 B（中）：Bun 侧的两个新路径尚未在本项目验证。**
+> **【M0/S1+S2 spike 回填 · 2026-08-07】风险 B 已验证，两条退路都不启用。**
+>
+> - `@colyseus/bun-websockets@0.17.13` 在 **Bun 1.3.14** 下开箱可用。join / 双向消息 /
+>   断线重连全部跑通，本机 echo 往返 **0.84–0.96 ms**。读源码确认：`bun-serve-express`
+>   那层 shim **不在请求热路径上**（只有传了 `ServerOptions.express` 才构造 express app，
+>   我们没传；请求走 better-call router 分支）。**不必退回 `@colyseus/ws-transport`。**
+> - Vite 8.2.1 在 Bun 下能起（dev server ready ~100ms），且**确实跑在 Bun 上**
+>   （`lsof` 的 txt 段 = `/Users/…/.bun/bin/bun`；注意 `ps` 会显示成 `node`，
+>   因为 Bun 会改写进程标题做兼容——别用 `ps` 判断）。N-API 原生插件（fsevents、
+>   `@rolldown/binding-*`）在 Bun 下正常加载，`vite build` 也跑通。**不必把客户端 dev 迁回 Node。**
+>
+> 两个已知毛刺（均已记入[风险登记册](../todos/风险登记册.md)）：
+> 1. 改 `vite.config.ts` 触发的自动重启在 Bun 下会挂死（打了 `restarting server...` 就没下文，
+>    端口不再 LISTEN）。Node 下正常，所以是 Bun 的 Node 兼容层问题。绕法：Ctrl-C 重跑。
+> 2. Bun 下 `localhost` 优先解析到 `::1`，`curl 127.0.0.1` 会连不上。
+>    已在 `vite.config.ts` 钉死 `server.host = "127.0.0.1"`。
+
+**风险 B（中 · 已验证可用）：Bun 侧的两个新路径尚未在本项目验证。**
 
 - `@colyseus/bun-websockets@0.17.13` 是官方包，但依赖 `bun-serve-express` 这层 shim，
   比久经考验的 `ws` 传输年轻。
@@ -116,7 +153,24 @@ tags: prismfront, 架构, monorepo, turborepo, bun, typescript, phaser, colyseus
 （`ts-json-schema-generator`）。若它未适配 TS 7，改用 `zod` 定义 IR 运行时 schema
 并反向生成 JSON Schema——L1 结构校验本来就只需要一份可执行的 schema。
 
-**风险 D（低）：Phaser 4 刚发布。** 官方明确"公开 API 与 Phaser 3 基本一致，内部渲染器重写，
+> **【M0/S2 spike 回填 · 2026-08-07】风险 D 已验证，不必回退 3.90 —— 但有一个类型系统拦不住的陷阱。**
+>
+> Phaser v4.0.0 在浏览器里正常 boot（WebGL / ANGLE Metal），Scene / Sprite / Graphics /
+> Tween / `generateTexture` 这几个我们真正依赖的部分与 v3 用法一致，稳定 120fps，
+> console 零 error。`vite build` 产物 1352KB / gzip 351KB，在《客户端技术设计》§11 的 2MB 目标内。
+>
+> **⚠️ 陷阱：`phaser@4.0.0` 的 ESM 产物没有 default 导出，但 `.d.ts` 说有。**
+> `exports.import` 指向 `dist/phaser.esm.js`（webpack 单文件包，只有具名导出），
+> 而 `types/phaser.d.ts` 结尾是 `export = Phaser`。我们 `module: "preserve"` 隐含
+> `esModuleInterop`，于是 `import Phaser from "phaser"` **能干净地过 `tsc`**，一进浏览器就炸：
+> `Uncaught SyntaxError: … does not provide an export named 'default'`。
+> **M10 的硬规矩：全仓统一 `import { Game, Scene, AUTO } from "phaser"`，禁 default 导入。**
+>
+> 另注：`phaser.esm.js` 是单文件包，Rolldown 的 tree-shaking 基本吃不到
+> （Matter / Tilemaps 等未用子系统剥不掉），351KB gzip 就是默认入口的地板价。
+> `vite build` 每次都会打 `Some chunks are larger than 500 kB` 告警，M10 决定是调阈值还是接受。
+
+**风险 D（低 · 已验证）：Phaser 4 刚发布。** 官方明确"公开 API 与 Phaser 3 基本一致，内部渲染器重写，
 提供迁移指南"。我们用的都是最稳定的部分（Scene、Container、Sprite、Text、Tween、
 RenderTexture、Input）。回退 `phaser@3.90.x` 对客户端代码改动很小——
 这也是《Phaser 客户端技术设计》坚持把编排逻辑与显示对象分离的理由之一。

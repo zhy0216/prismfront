@@ -1,0 +1,63 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "ui": "tui",
+  "globalDependencies": ["tsconfig.base.json", "biome.json", "bun.lock"],
+
+  "tasks": {
+    // 传输节点：本身不执行脚本，只把「依赖包的源文件」纳入下游任务的哈希。
+    // 源码包没有 build 产物，没有它就会出现「改了 ir，cards 的缓存却命中」。
+    "transit": { "dependsOn": ["^transit"] },
+
+    "typecheck": {
+      "dependsOn": ["transit"],
+      "inputs": ["src/**", "tsconfig.json", "$TURBO_DEFAULT$"],
+      "outputs": []
+    },
+
+    "lint": { "dependsOn": ["transit"], "outputs": [] },
+
+    // 卡牌编译：cards/src/**.ts → IR bundle + 客户端展示数据
+    "ir:build": {
+      "dependsOn": ["transit"],
+      "outputs": ["dist/cards.ir.json", "dist/cards.client.json"]
+    },
+
+    // 三层校验 + 资源上限 + 色轮归属 lint。CI 必过。
+    "ir:validate": { "dependsOn": ["ir:build"], "outputs": [] },
+
+    "test": {
+      "dependsOn": ["transit", "^ir:build"],
+      "outputs": ["coverage/**"]
+    },
+
+    // 只有 apps 实现 build
+    "build": {
+      "dependsOn": ["transit", "^ir:build"],
+      "outputs": ["dist/**", "!dist/**/*.map"]
+    },
+
+    // 批量模拟：确定性 ⇒ 输入不变则结果不变 ⇒ 可缓存。
+    // 这是本仓最贵的任务（万局对打），缓存收益也最大。
+    "sim": {
+      "dependsOn": ["^ir:build"],
+      "env": ["SIM_GAMES", "SIM_SEED"],
+      "outputs": ["reports/**"]
+    },
+
+    "dev": { "cache": false, "persistent": true }
+  },
+
+  // §2.2 禁令的机器可执行形式
+  "boundaries": {
+    "tags": {
+      "pure": {
+        "dependencies": {
+          "deny": ["colyseus", "colyseus.js", "phaser", "vite", "zod", "@types/bun"]
+        }
+      },
+      "no-rules": {
+        "dependencies": { "deny": ["@prismfront/engine", "@prismfront/cards"] }
+      }
+    }
+  }
+}

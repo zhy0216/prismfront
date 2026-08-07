@@ -1,0 +1,66 @@
+# Prismfront CI
+#
+# 流水线顺序逐条对应《Prismfront 工程与技术架构》§3.3，一步不删、一步不换位。
+#
+# 为什么只有 test 一步是注释掉的（turbo 2.10.8 实测行为，别凭印象改）：
+#   任务名只要在根 turbo.json 的 tasks 里声明过，即使当前没有任何包实现它，
+#   turbo 也会正常解析、打一条 "No tasks were executed" warning、**退出 0**。
+#   实测：turbo ir:validate / build / sim 三者当前都 exit 0；
+#   只有 turbo.json 里根本没声明的任务名才报错（turbo nosuchtask → exit 1）。
+#   所以 ir:validate / build / sim 保持激活——今天空转为绿，等对应里程碑落地后
+#   自动变成真检查，不需要有人记得回来取消注释。
+#
+#   test 是唯一必须关掉的一步：8 个包都有 "test": "bun test"，但一个测试文件都没有，
+#   而 `bun test` 在零测试文件时 **exit 1**（实测）。M1 写出第一批测试后取消注释。
+#
+#   **不给各包加空 stub script 来凑绿——那是假绿。**
+#
+# M0 结束时全仓真实存在的包级 script：typecheck / lint / test
+#（boundaries 是 turbo 内建命令，不需要包级 script）。
+#
+# 远程缓存（Vercel Remote Cache 或自建 S3，§3.3 末尾）在 sim 上收益最大，
+# 但那是建议不是 M0 任务：等 sim 真的进 CI（M8）再接。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # 与根 package.json 的 packageManager: "bun@1.3.14" 钉一致
+          bun-version: 1.3.14
+
+      - name: bun install
+        run: bun install --frozen-lockfile
+
+      - name: turbo boundaries # 分层铁律
+        run: bunx turbo boundaries
+
+      - name: turbo lint typecheck # 并行
+        run: bunx turbo lint typecheck
+
+      # 空转为绿，M4（packages/cards 有 ir:build / ir:validate）后自动变真检查
+      - name: turbo ir:validate # 卡牌数据闸门
+        run: bunx turbo ir:validate
+
+      # 唯一被关掉的一步：零测试文件时 bun test exit 1。M1 第一批测试落地后取消注释。
+      # - name: turbo test # 含确定性 / 隐藏信息 / 时序 / 战斗四类专项
+      #   run: bunx turbo test
+
+      # 空转为绿，M9 / M10（apps/server、apps/client 有 build）后自动变真检查
+      - name: turbo build
+        run: bunx turbo build
+
+      # 空转为绿，M8（apps/cli 有 sim）后自动变真检查
+      # 同一时机再考虑 nightly.yml（夜间 10 万局），M0 不建。
+      - name: turbo sim # smoke 级 fuzz；夜间任务跑 10 万局
+        run: bunx turbo sim -- --games=2000
