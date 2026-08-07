@@ -18,8 +18,15 @@
 #   `bun test` 在**零测试文件**时 exit 1，所以**只有真正有 *.test.ts 的包才声明
 #   `"test": "bun test"`**。空的 test 脚本会让 `bunx turbo test` 永远红。
 #   各包在自己的里程碑落下第一条测试时，再把这一行加回该包的 package.json。
-#   当前有 test 脚本的包：packages/ir（M1）。
-#   待加回：engine（M2）、cards（M4）、shared / bot / cli（M8）、server（M9）、client（M10）。
+#   当前有 test 脚本的包：packages/ir（M1）、packages/engine（M2）。
+#   待加回：cards（M4）、shared / bot / cli（M8）、server（M9）、client（M10）。
+#
+# ── 覆盖率闸门在哪里生效（M2 定，风险登记册 R-M0-2 的处置）────────────────────
+#   `turbo test` 的 cwd 是**包目录**，而 bun 只从 cwd 读 `bunfig.toml` ——
+#   所以闸门配在 `packages/*/bunfig.toml`，**不是**仓库根那一份（根的只在本地
+#   从根跑 `bun test` 时生效）。新包落第一条测试时，`bunfig.toml` 要和 `test`
+#   脚本一起加，否则该包的覆盖率不设防。写法上有两个坑（阈值必须是标量、
+#   且逐文件判定），详见 `packages/engine/bunfig.toml` 的文件头。
 #
 # 远程缓存（Vercel Remote Cache 或自建 S3，§3.3 末尾）在 sim 上收益最大，
 # 但那是建议不是 M0 任务：等 sim 真的进 CI（M8）再接。

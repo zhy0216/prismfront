@@ -1,4 +1,15 @@
+# 仓库根 bunfig —— 只在**从根跑** `bun test` 时生效（本地全量跑、覆盖率总账）。
+#
+# CI 走的是 `bunx turbo test`，它的 cwd 是**包目录**，读的是各包自己的
+# `packages/*/bunfig.toml`，**不是这一份** —— bun 1.3.14 只从 cwd 读 bunfig，不往上找。
+# 完整论证见 `packages/engine/bunfig.toml` 与风险登记册 R-M0-2。
+#
+# ⚠ `coverageThreshold` 是**标量**，而且**逐文件**判定。架构 §7 原文写的是行内表
+#   `{ line = 0.8 }`，而 bun 1.3.14 会**静默忽略**行内表（`{ line = 1.0 }` 照样 exit 0）——
+#   这里按实测行为改成标量，偏离记在 R-M0-2。全局覆盖率达标不代表能过闸门：
+#   阈值卡的是**最低的那个文件**。
+
 [test]
 preload = ["./test-setup.ts"]
 coverage = true
-coverageThreshold = { line = 0.8 }
+coverageThreshold = 0.8
