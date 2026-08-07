@@ -43,6 +43,15 @@ risk: high
 | `color-gate-blackout` | 英雄阵亡 → 该色全锁 → 一回合后解锁 | ☐ |
 | `deploy-r1-r2` | 部署两批 | ☐ |
 | `discover-suspend` | 挂起点与恢复 | ☐ |
+| `initiative-first-passer` | `initiative: "first_passer"` 全程（[决策 #2](./决策待办.md)） | ☐ |
+
+### replay 格式的两条硬约束（[决策 #2](./决策待办.md) 已拍板）
+
+- [ ] 每个 replay 文件**内嵌完整 `RulesConfig` 快照**，回放时用文件里的配置，
+      **不读默认值**。否则改一次默认值，历史 golden 集体变红，而它们本该是不变量。
+- [ ] golden 集**至少一局跑 `first_passer`**（上表最后一行）。
+      默认是 `alternate`，`first_passer` 那条码路径若无夹具，会在 M9–M11 期间静默烂掉——
+      而 M12 做试玩对比时正是最不该撞见意外的时刻。
 
 ---
 
@@ -50,7 +59,7 @@ risk: high
 
 ```bash
 bunx turbo sim -- --games=100000     # 无断言失败
-ls replays/golden/                   # 七个夹具齐备
+ls replays/golden/                   # 八个夹具齐备
 ```
 
 - [ ] 两条命令全部通过

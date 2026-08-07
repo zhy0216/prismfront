@@ -43,6 +43,17 @@ risk: high
 
 - [ ] `alternate` / `first_passer` / `random_each_round` / `fixed_first`，走 `RulesConfig` 切换。
       `first_passer` 是 Artifact 公认的深度来源，要留着在 M12 试玩对比（v2 §6，[决策 #2](./决策待办.md)）。
+- [ ] **默认 `alternate`**（[决策 #2](./决策待办.md) 已拍板）。首回合先手随机、消耗 RNG（v2 §36），
+      与 `initiative` 策略正交，不要写成策略的一部分。
+
+### 4b. `playerActions` 恒关 —— 配置校验期抛错
+
+- [ ] `RulesConfig` 保留 `playerActions` 字段，但配置校验遇到 `move_unit` / `set_direction`
+      **直接抛错**，不实现、也不静默忽略（[决策 #3](./决策待办.md) 已拍板）。
+
+> 决策理由：`direction` 在《数值基准》§1.2 是**红 primary / 绿 forbidden**。
+> 玩家能免费改方向 = 红色主色身份蒸发 + 绿色禁令失效，**开了就得重写 §1.2**。
+> 抛错而非静默无效，是为了让将来任何人打开这个开关时当场撞墙，而不是跑出一局错的对局。
 
 ### 5. 战斗阶段严格按 v2 §4.2 五步
 
@@ -86,7 +97,8 @@ test("stunned 单位不进入快照");
 同归于尽就不成立，整个战斗手感全变——而这个 bug 在随机对局里未必立刻显形。
 所以它必须有独立测试，**不能靠 fuzz 兜**。
 
-## 待决策
+## 已决策（2026-08-07）
 
-- [决策 #2](./决策待办.md)：`initiative` 默认策略（此处实现，M12 定）
-- [决策 #3](./决策待办.md)：`playerActions` 是否开放「移动单位 / 改方向」
+- [决策 #2](./决策待办.md)：`initiative` **默认 `alternate`**，四种全实现。
+  golden 的防线在 M8（配置快照 + 一局 `first_passer`），不在这里。
+- [决策 #3](./决策待办.md)：`playerActions` **恒关**，配置校验期对另两个值抛错。

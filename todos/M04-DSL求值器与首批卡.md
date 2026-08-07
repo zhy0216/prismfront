@@ -32,6 +32,20 @@ risk: normal
 - [ ] RNG 求值顺序（IR §5.4）。
 - [ ] 先支持 8–10 个最常用 op，跑通 G01–G05、R01/R07/R09、B01/B02。
 
+### 新增 op：`cond.has_color`（[决策 #9](./决策待办.md) 已拍板）
+
+M1 实测发现的真实表达力缺口——93 个 op 里没有任何一个能按颜色筛卡池，
+而 v2.1 §11.4 已用 `card.data.colors` 取代了 `faction`。
+
+- [ ] `packages/ir` 加 op，**签名对齐 `cond.is_kind`**：
+      `{ op: "cond.has_color"; of: Sel; color: Color | Color[] }`
+- [ ] 语义 = `of` 中**每个**成员的 `data.colors` 与参数集合**有交集**
+      （`of` 全称量化、`color` 列表存在量化）。**融合卡同时命中它的两个颜色。**
+- [ ] `irVersion` **minor bump**（IR §8：新增 op = minor）
+- [ ] builder 出明确的糖（§3.3 惯例：不让调用方自己拼全称/存在量化）
+- [ ] 补齐 IR §10.5「发现」示例的另一半——M1 的 `spec-cards.test.ts` 当时只比对了
+      可表达的那一半并点名说明，此处消除该注记
+
 ---
 
 ## 完成标志
