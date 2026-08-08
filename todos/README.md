@@ -57,7 +57,7 @@ M0 ── M1 ── M2 ── M3 ── M4 ── M5 ── M6 ── M7 ── 
 | [M0](./done/M00-工程骨架与选型验证.md) | 工程骨架与选型验证 | 8 包骨架、turbo、CI、**技术 spike** | `bunx turbo typecheck lint` + `bunx turbo boundaries` | 1–1.5d | ✅ |
 | [M1](./done/M01-IR权威类型与builder.md) | IR 权威类型与 builder | `packages/ir` | `bun test packages/ir` + `bun run ir:print GRID_001` | 2–3d | ✅ |
 | [M2](./done/M02-引擎内核I-状态与结算骨架.md) | 引擎内核 I：状态与结算骨架 | 状态/RNG/结算栈/事件流 | 确定性 + 序列化往返测试 | 3–4d | ✅ |
-| [M3](./M03-引擎内核II-回合与同时结算.md) | 引擎内核 II：回合与同时结算 ★ | v2/v2.1 状态机、战斗 | 战斗边界四测 | 4–6d | ☐ |
+| [M3](./done/M03-引擎内核II-回合与同时结算.md) | 引擎内核 II：回合与同时结算 ★ | v2/v2.1 状态机、战斗 | 战斗边界四测 | 4–6d | ✅ |
 | [M4](./M04-DSL求值器与首批卡.md) | DSL 求值器与首批卡 | 求值器、handler 表、10 张卡 | `bunx turbo ir:build` + 单卡测试 | 4–5d | ☐ |
 | [M5](./M05-触发拦截光环.md) | 触发 / 拦截 / 光环 ★ | 三分体系、附魔 | Artifact 四关键词可写 | 3–5d | ☐ |
 | [M6](./M06-英雄色门融合复燃泉.md) | 英雄 / 色门 / 融合 / 复燃泉 | v2.1 全套 | 色门与复活测试 | 3–4d | ☐ |

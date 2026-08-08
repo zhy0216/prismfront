@@ -3,7 +3,7 @@ title: M3 · 引擎内核 II：回合状态机与同时结算 ★
 date: 2026-08-07
 tags: prismfront, 里程碑, M3, 引擎, 相位机, 同时结算, 战斗, 高风险
 milestone: M3
-status: todo
+status: done
 estimate: 4–6d
 depends_on: [M2]
 blocks: [M4]
