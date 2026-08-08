@@ -2,19 +2,24 @@
 //
 // 走查测试（`src/__tests__/walkthrough.test.ts`）跑的是成功路径，
 // 这里补的是框架 §4.2 的另一半 —— 结算中途停下来等玩家选择，然后 `respond` 接着跑。
-// M2 的临时 handler 里没有会挂起的动作（`act.discover` 是 M4），所以本文件自己
+// M2/M3 的临时 handler 里没有会挂起的动作（`act.discover` 是 M4），所以本文件自己
 // 注入一张会挂起的 handler 表：**`apply` 的 `deps` 参数就是为这种事留的**。
+//
+// M3 起唯一能被玩家意图直接触到的动作是 `act.move`（`play_card` 压的就是它）——
+// `act.strike` 不再有对应的意图（v2 §3.4 删掉 `act.attack`，出手只由战斗快照与
+// 卡牌效果驱动），所以挂起点挂在 `act.move` 上，模拟一张「打出时：选一个目标」的牌。
 //
 // 注：本文件**不 import `@prismfront/ir` 的任何值**（架构 §2.2 禁令 1）。
 
 import { expect, test } from "bun:test";
 import type { CardId, RulesConfig } from "@prismfront/ir";
-import { M2_HANDLERS, strikeHandler } from "../../handlers/index.ts";
+import { M2_HANDLERS, moveHandler } from "../../handlers/index.ts";
 import type { HandlerTable, ResolveDeps } from "../../resolve/index.ts";
 import { pushAct, ResolutionLoopError, suspend } from "../../resolve/index.ts";
 import type { GameState } from "../../state/index.ts";
-import { getEntity, getZone } from "../../state/index.ts";
-import type { ApplyResult, Intent } from "../index.ts";
+import { getEntity } from "../../state/index.ts";
+import { expectOk, handOf, playCard, setFace, startMatch } from "../../testkit/index.ts";
+import type { Intent } from "../index.ts";
 import { apply, createGame } from "../index.ts";
 
 const RULES: RulesConfig = {
@@ -30,54 +35,44 @@ const RULES: RulesConfig = {
   heroes: { perDeck: 3, deploySchedule: [2, 1], respawnDelay: 1 },
 };
 
-const DECK: readonly CardId[] = ["PF_X"];
+const DECK: readonly CardId[] = ["PF_X1", "PF_X2", "PF_X3", "PF_X4", "PF_X5", "PF_X6"];
 
-function expectOk(result: ApplyResult): { state: GameState; events: readonly unknown[] } {
-  if (!result.ok) {
-    throw new Error(`意图被拒：${result.code}`);
-  }
-  return { state: result.state, events: result.events };
-}
+/** p0 起手的第一张（实体 id 写死：p0 base=1、p1 base=2、p0 牌库从 3 起）。 */
+const P0_CARD = 3;
+/** p1 起手的第一张（p1 牌库从 3 + DECK.length = 9 起）。 */
+const P1_CARD = 9;
 
-/** 双方各上场一个单位（p0 是 3/9 的攻击方，p1 是 1/9 的挨打方）。 */
-function boardState(): { state: GameState; p0Unit: number; p1Unit: number } {
-  const start = createGame(RULES, [DECK, DECK], 1, { shuffle: false });
+/**
+ * 推进到第 1 回合的 `actions` 相位，p0 已经在 0 号格放了一个 3/9、p1 放了一个 1/9。
+ *
+ * 不洗牌 + 钉先手：本文件断言的是 `apply` 的分支，盘面必须完全可预测。
+ */
+function boardState(): GameState {
+  const start = createGame(RULES, [DECK, DECK], 1, { shuffle: false, firstPlayer: 0 });
   for (const player of [0, 1] as const) {
-    const top = getZone(start, player, "deck")[0];
-    const card = top === undefined ? undefined : getEntity(start, top);
-    if (card === undefined) {
-      throw new Error("夹具错误：牌库是空的");
+    for (const id of handOf(start, player)) {
+      setFace(start, id, { atk: 1, health: 9, cost: 0 });
     }
-    card.base.atk = player === 0 ? 3 : 1;
-    card.base.health = 9;
   }
-  const p0Unit = getZone(start, 0, "deck")[0] ?? 0;
-  const p1Unit = getZone(start, 1, "deck")[0] ?? 0;
+  setFace(start, P0_CARD, { atk: 3, health: 9, cost: 0 });
+  setFace(start, P1_CARD, { atk: 1, health: 9, cost: 0 });
 
-  const intents: readonly Intent[] = [
-    { t: "draw", player: 0 },
-    { t: "draw", player: 1 },
-    { t: "play_unit", player: 0, card: p0Unit, slot: 0 },
-    { t: "play_unit", player: 1, card: p1Unit, slot: 0 },
-  ];
-  let state = start;
-  for (const intent of intents) {
-    state = expectOk(apply(state, intent)).state;
-  }
-  return { state, p0Unit, p1Unit };
+  const opened = startMatch(start).state;
+  const a = playCard(opened, P0_CARD, 0).state;
+  return playCard(a, P1_CARD, 0).state;
 }
 
 /**
- * 一张会在出手前挂起的 handler 表。
+ * 一张会在把牌放上场之前挂起的 handler 表。
  *
  * 遵守 `resolve/suspend.ts` 的挂起契约：**先把续跑动作压回栈，再 `suspend`**。
  * 用 `ctx.chosen === null` 区分"第一次进来"与"玩家回应之后续跑"——
- * `resume` 会把选择写进栈顶条目的 `ctx.chosen`，也就是刚压回去的那条 strike。
+ * `resume` 会把选择写进栈顶条目的 `ctx.chosen`，也就是刚压回去的那条 `act.move`。
  */
 function suspendingDeps(options: readonly number[]): ResolveDeps {
   const handlers: HandlerTable = {
     ...M2_HANDLERS,
-    "act.strike": (state, ctx, act) => {
+    "act.move": (state, ctx, act) => {
       if (ctx.chosen === null) {
         pushAct(state, act, ctx);
         suspend(state, {
@@ -89,10 +84,19 @@ function suspendingDeps(options: readonly number[]): ResolveDeps {
         });
         return;
       }
-      strikeHandler(state, ctx, act);
+      moveHandler(state, ctx, act);
     },
   };
   return { handlers };
+}
+
+/** 当前 `priority` 方手里的第一张牌。 */
+function nextCard(state: GameState): number {
+  const card = handOf(state, state.priority)[0];
+  if (card === undefined) {
+    throw new Error("夹具错误：手牌是空的");
+  }
+  return card;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -100,14 +104,16 @@ function suspendingDeps(options: readonly number[]): ResolveDeps {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test("挂起：apply 照常 ok:true，pendingInput 留在返回的状态里，续跑动作还在栈上", () => {
-  const { state, p0Unit, p1Unit } = boardState();
-  const deps = suspendingDeps([p1Unit]);
+  const state = boardState();
+  const card = nextCard(state);
+  const deps = suspendingDeps([card]);
 
-  const step = expectOk(
-    apply(state, { t: "strike", player: 0, attacker: p0Unit, target: p1Unit }, deps),
-  );
+  const step = expectOk(apply(state, { t: "play_card", player: 0, card, slot: 1 }, deps));
 
-  expect(step.events).toEqual([]);
+  // 相位机的记账段已经跑完（`action_taken` / `card_played` 都发了、行动权已换手），
+  // 挂起的是**效果段** —— 这正是 `rules/phase.ts` 那条"先记账后结算"的设计。
+  expect(step.events.map((e) => e.name)).toEqual(["action_taken", "card_played"]);
+  expect(step.state.priority).toBe(1);
   expect(step.state.pendingInput?.kind).toBe("select_target");
   expect(step.state.stack).toHaveLength(1);
   expect(step.state.eventLog).toEqual([]); // 挂起路径同样排空事件日志
@@ -117,49 +123,58 @@ test("挂起：apply 照常 ok:true，pendingInput 留在返回的状态里，�
 });
 
 test("挂起期间只接受 respond，别的意图一律 awaiting_input", () => {
-  const { state, p0Unit, p1Unit } = boardState();
-  const deps = suspendingDeps([p1Unit]);
+  const state = boardState();
+  const card = nextCard(state);
+  const deps = suspendingDeps([card]);
   const suspended = expectOk(
-    apply(state, { t: "strike", player: 0, attacker: p0Unit, target: p1Unit }, deps),
+    apply(state, { t: "play_card", player: 0, card, slot: 1 }, deps),
   ).state;
 
-  expect(apply(suspended, { t: "draw", player: 0 }, deps)).toEqual({
+  expect(apply(suspended, { t: "pass", player: 1 }, deps)).toEqual({
     ok: false,
     code: "awaiting_input",
   });
-  expect(apply(suspended, { t: "play_unit", player: 0, card: p0Unit, slot: 1 }, deps)).toEqual({
+  expect(apply(suspended, { t: "play_card", player: 1, card: P1_CARD, slot: 2 }, deps)).toEqual({
+    ok: false,
+    code: "awaiting_input",
+  });
+  // 认输在别的相位都合法，挂起期间同样要让位给 respond —— 否则栈上的续跑动作会被
+  // 一个"对局已结束"的状态吞掉，重连回来对不上账。
+  expect(apply(suspended, { t: "concede", player: 1 }, deps)).toEqual({
     ok: false,
     code: "awaiting_input",
   });
 });
 
 test("respond：选择写进栈顶 ctx.chosen，结算从中断处继续", () => {
-  const { state, p0Unit, p1Unit } = boardState();
-  const deps = suspendingDeps([p1Unit]);
+  const state = boardState();
+  const card = nextCard(state);
+  const deps = suspendingDeps([card]);
   const suspended = expectOk(
-    apply(state, { t: "strike", player: 0, attacker: p0Unit, target: p1Unit }, deps),
+    apply(state, { t: "play_card", player: 0, card, slot: 1 }, deps),
   ).state;
 
-  const resumed = expectOk(apply(suspended, { t: "respond", player: 0, chosen: p1Unit }, deps));
+  const resumed = expectOk(apply(suspended, { t: "respond", player: 0, chosen: card }, deps));
 
   expect(resumed.state.pendingInput).toBeNull();
-  expect(resumed.events).toEqual([
-    { name: "struck", source: p0Unit, target: p1Unit, amount: 3 },
-    { name: "damaged", source: p0Unit, target: p1Unit, amount: 3 },
-  ]);
-  expect(getEntity(resumed.state, p1Unit)?.damage).toBe(3);
+  expect(resumed.events.map((e) => e.name)).toEqual(["unit_summoned"]);
+  expect(resumed.state.slots[0][1]).toBe(card);
   expect(resumed.state.seq).toBe(suspended.seq + 1);
+  // 挂起点跨过去之后相位机接着走：还在 actions 相位，行动权在 p1 手里。
+  expect(resumed.state.phase).toBe("actions");
+  expect(resumed.state.priority).toBe(1);
 });
 
 test("respond 的两类拒绝：不该他选（wrong_player）、选了候选集外的（invalid_choice）", () => {
-  const { state, p0Unit, p1Unit } = boardState();
-  const deps = suspendingDeps([p1Unit]);
+  const state = boardState();
+  const card = nextCard(state);
+  const deps = suspendingDeps([card]);
   const suspended = expectOk(
-    apply(state, { t: "strike", player: 0, attacker: p0Unit, target: p1Unit }, deps),
+    apply(state, { t: "play_card", player: 0, card, slot: 1 }, deps),
   ).state;
   const before = JSON.stringify(suspended);
 
-  expect(apply(suspended, { t: "respond", player: 1, chosen: p1Unit }, deps)).toEqual({
+  expect(apply(suspended, { t: "respond", player: 1, chosen: card }, deps)).toEqual({
     ok: false,
     code: "wrong_player",
   });
@@ -177,17 +192,18 @@ test("respond 的两类拒绝：不该他选（wrong_player）、选了候选集
 });
 
 test("apply 不吞 ResolutionLoopError：结算成环是引擎/卡牌的 bug，不是非法意图", () => {
-  const { state, p0Unit, p1Unit } = boardState();
+  const state = boardState();
+  const card = nextCard(state);
   const handlers: HandlerTable = {
     ...M2_HANDLERS,
-    "act.strike": (s, ctx, act) => {
+    "act.move": (s, ctx, act) => {
       pushAct(s, act, ctx); // 自我复制 = 真环
     },
   };
 
   let caught: unknown = null;
   try {
-    apply(state, { t: "strike", player: 0, attacker: p0Unit, target: p1Unit }, { handlers });
+    apply(state, { t: "play_card", player: 0, card, slot: 1 }, { handlers });
   } catch (error) {
     caught = error;
   }
@@ -201,44 +217,41 @@ test("apply 不吞 ResolutionLoopError：结算成环是引擎/卡牌的 bug，�
 // 意图校验的其余分支
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("strike 的三条校验：实体存在、在场上、由发起方控制", () => {
-  const { state, p0Unit, p1Unit } = boardState();
-
-  expect(apply(state, { t: "strike", player: 0, attacker: 9999, target: p1Unit })).toEqual({
-    ok: false,
-    code: "unknown_entity",
-  });
-  // base 实体不在 board 区（v2.1 §11.2：它不占格），因此不能出手。
-  expect(
-    apply(state, { t: "strike", player: 0, attacker: state.players[0].baseId, target: p1Unit }),
-  ).toEqual({ ok: false, code: "wrong_zone" });
-  expect(apply(state, { t: "strike", player: 1, attacker: p0Unit, target: p1Unit })).toEqual({
-    ok: false,
-    code: "not_controlled",
-  });
-  // 打自己人是合法意图（能不能打到是 handler 的事）。
-  expect(apply(state, { t: "strike", player: 0, attacker: p0Unit, target: p0Unit }).ok).toBe(true);
-});
-
-test("play_unit：被偷来的牌（owner 是对手）落在**控制者**的战线上", () => {
-  const start = createGame(RULES, [DECK, DECK], 1, { shuffle: false });
-  const drawn = expectOk(apply(start, { t: "draw", player: 0 })).state;
-  const card = getZone(drawn, 0, "hand")[0];
-  expect(card).toBeDefined();
-  if (card === undefined) {
-    return;
-  }
-  const entity = getEntity(drawn, card);
+test("play_card：被偷来的牌（owner 是对手）落在**控制者**的战线上", () => {
+  const state = boardState();
+  const card = nextCard(state);
+  const entity = getEntity(state, card);
+  expect(entity).toBeDefined();
   if (entity === undefined) {
     return;
   }
-  entity.base.health = 3;
-  entity.tags.health = 3;
   entity.owner = 1; // act.steal 之后的形态：owner 是 p1，却握在 p0 手里
 
-  const played = expectOk(apply(drawn, { t: "play_unit", player: 0, card, slot: 2 }));
+  const played = playCard(state, card, 2);
 
   expect(played.state.slots[0][2]).toBe(card);
   expect(getEntity(played.state, card)?.zone).toBe("p0:board");
   expect(getEntity(played.state, card)?.owner).toBe(1); // 归属没变
+});
+
+test("concede：任意相位任意一方都能认输，对手直接获胜且不发事件", () => {
+  const fresh = createGame(RULES, [DECK, DECK], 1, { shuffle: false, firstPlayer: 0 });
+  // mulligan 相位（还没进第 1 回合）就能认输。
+  const early = expectOk(apply(fresh, { t: "concede", player: 1 }));
+  expect(early.events).toEqual([]); // v2 §5 没有"对局结束"事件，胜负由 state.winner 承载
+  expect(early.state.winner).toBe(0);
+  expect(early.state.phase).toBe("over"); // winner !== null ⇔ phase === "over"
+  expect(apply(early.state, { t: "pass", player: 0 })).toEqual({ ok: false, code: "game_over" });
+
+  // actions 相位里，**不持有 priority 的一方**同样能认输。
+  const mid = boardState();
+  expect(mid.priority).toBe(0);
+  const late = expectOk(apply(mid, { t: "concede", player: 1 }));
+  expect(late.state.winner).toBe(0);
+});
+
+test("未知的 t 落到 unknown_intent（不可信输入的兜底）", () => {
+  const state = boardState();
+  const bogus = { t: "hack", player: 0 } as unknown as Intent;
+  expect(apply(state, bogus)).toEqual({ ok: false, code: "unknown_intent" });
 });

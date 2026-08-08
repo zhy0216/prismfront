@@ -38,6 +38,12 @@
 //   两份规范说的是同一条流水线，只是起点不同。本目录一律用 IR §5.5 的编号，
 //   免得「第 4 步」在两个文件里指两件事。
 //
+// ★ **全仓还有第二处按这个顺序跑六步的地方**：`rules/combat.ts` 的 `applyStrikes`
+//   （v2 §4.2 第 ③ 步，战斗批次里跳过第 ⑤ 步、并把第 ④ 步排出的触发器留在栈上）。
+//   它不复制任何一步的**实现**（六步全调本目录导出的同名函数），但复制了这个**顺序**。
+//   **改动下面这六步的顺序或增删步骤，请同步改那里**，并读一遍那个文件头部
+//   「为什么选旁路管线而不是给 resolve() 加模式开关」的取舍。
+//
 // M2 的实现状态：**管线全通，②④⑥ 是恒等空实现，⑤ 是真实现**。
 //   ② 拦截器 → M5（`interceptors.ts`：无拦截器源 ⇒ 空链 ⇒ 动作原样返回）
 //   ④ 触发   → M5（`triggers.ts`：排序与入栈已做对并有测试，只差"事件→触发器"的匹配）
@@ -52,8 +58,13 @@
 //    这里改成注入，理由见 `deps.ts` 文件头（框架 §3.2 引擎是纯函数 / MCTS 并行推演）。
 // B. **多一个退出条件 `state.winner !== null`**。DSL v2 §4.1：base 归零 → `over`，
 //    「任意时刻」判定。对局已经结束还继续弹栈，只会让亡语在终局之后凭空生效。
-//    栈上剩余条目**不清空** —— 清空是相位机（M3）进 `over` 相位时的事，
-//    而且留着它对复现"终局那一刻栈里还有什么"很有用。
+//    判断在**循环体开头（pop 之前）**：放在体末的话，一个 `winner` 已非空的状态传进来
+//    仍会被弹掉并执行栈顶一条才退出 —— 那正是本条要禁掉的事。
+//    栈上剩余条目**本函数不清空**，留着它对复现"终局那一刻栈里还有什么"很有用；
+//    清空的落点是 `rules/phase.ts` 的 `concludeMatch`（由 `advancePhases` 在观察到
+//    `winner` 之后调用，而 `apply()` / `applyRespond()` 无条件走 `advancePhases`）。
+//    ⚠ M3 之前这里写的是「清空是相位机进 `over` 相位时的事」——那是一句没有实现的承诺：
+//    `over` 由 `deaths.ts` 的 `settleBases` 直接写上去，相位机根本没有"进 over"这一步。
 
 import type { GameEvent } from "../events/index.ts";
 import { drainEventLog } from "../events/index.ts";
@@ -115,7 +126,8 @@ export class ResolutionLoopError extends Error {
  *   - 栈空 —— 正常结束；
  *   - `state.pendingInput !== null` —— 挂起等玩家输入，整个 state 可序列化落盘
  *     （框架 §4.2）；由 `suspend.ts` 的 `resume()` 接着弹栈；
- *   - `state.winner !== null` —— 对局结束（见文件头偏离 B）。
+ *   - `state.winner !== null` —— 对局结束（见文件头偏离 B）。**进来时就非空则一条都不弹**，
+ *     直接返回空事件流：调用方（相位机、战斗的第 ④ 步）因此可以无脑再调一次。
  * 第四条是抛 {@link ResolutionLoopError}，它同样在抛之前排空（事件挂在错误对象上）。
  *
  * @param deps handler 表与脚本展开器，见 `deps.ts`。
@@ -124,6 +136,13 @@ export function resolve(state: GameState, deps: ResolveDeps): GameEvent[] {
   let guard = 0;
 
   while (state.stack.length > 0) {
+    // 对局结束 → 停止结算（见文件头偏离 B）。★ 必须在 `pop()` **之前**判：
+    // 传进来时 `winner` 已经非空（战斗第 ④ 步打穿 base、认输、上一段结算判出胜负）
+    // 的话，判断放在循环体末尾就等于"先执行一条再退出" —— 终局之后凭空多跑一条动作，
+    // 而它多半是一条亡语或触发器。也因此这里**不**计 `guard`：一次都没弹栈。
+    if (state.winner !== null) {
+      break;
+    }
     guard += 1;
     if (guard > MAX_RESOLUTION_DEPTH) {
       throw new ResolutionLoopError(MAX_RESOLUTION_DEPTH, drainEventLog(state));
@@ -170,10 +189,7 @@ export function resolve(state: GameState, deps: ResolveDeps): GameEvent[] {
     if (state.pendingInput !== null) {
       break;
     }
-    // 对局结束 → 停止结算（见文件头偏离 B）
-    if (state.winner !== null) {
-      break;
-    }
+    // 对局结束的那道判断在循环体开头，本步刚刚判出胜负时由下一轮的它接住。
   }
 
   return drainEventLog(state);

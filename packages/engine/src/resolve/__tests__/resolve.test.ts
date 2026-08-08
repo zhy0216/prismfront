@@ -525,7 +525,32 @@ test("对局结束后 resolve 立即停下，栈上剩余条目原样保留", ()
 
   expect(state.winner).toBe(0);
   expect(trace).toEqual(["hit:1"]); // 第二条没跑
+  // 栈上的剩余条目由 `rules/phase.ts` 的 `concludeMatch` 在这一整段结算之后清掉
+  //（`advancePhases` 观察到 winner 时），`resolve()` 自己留着它 —— 复现"终局那一刻
+  // 栈里还有什么"要用它，见 resolve.ts 文件头偏离 B。
   expect(state.stack).toHaveLength(1);
+});
+
+test("★ winner 进来时就非空 ⇒ resolve 一条都不弹（判断在 pop 之前）", () => {
+  // 上一条测的是"结算中途判出胜负"，这一条测的是**入口**：战斗第 ④ 步打穿 base 之后，
+  // 相位机与 `settleCombat` 都会拿着一个 `winner` 已非空的状态再调一次 `resolve()`。
+  // 判断若留在循环体末尾，这里会先弹掉并执行栈顶一条才退出 —— 而那一条多半是亡语或
+  // 触发器，正是偏离 B 说的"在终局之后凭空生效"。
+  const state = freshState();
+  const unit = placeUnit(state, 1, 0, { health: 9 });
+  const { deps, trace } = tracingDeps();
+
+  pushActs(state, [hitAct(1), hitAct(2)], ctxOf(0, unit.id));
+  // `winner !== null ⇔ phase === "over"`（`state/game-state.ts`）：两个字段一起写。
+  state.winner = 0;
+  state.phase = "over";
+
+  const events = resolve(state, deps);
+
+  expect(trace).toEqual([]);
+  expect(events).toEqual([]);
+  expect(state.stack).toHaveLength(2);
+  expect(unit.damage).toBe(0);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

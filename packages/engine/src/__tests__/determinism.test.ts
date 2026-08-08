@@ -42,19 +42,21 @@
 // 悄悄洗掉，于是第二条测试对那一类腐化是瞎的 —— 实测在 `createInitialState` 里塞一个
 // Map，第二条照样绿。探针因此必须同时扎在「还没被 clone 洗过」的状态上。
 //
-// 另外，两条测试跑的是**真实对局**（24 次抽牌、6 次上场、6 次出手、3 次死亡、
-// 1 次非法意图被拒、基地挨了一击），不是拿两个空状态比哈希 —— 那样测试恒绿、毫无意义。
+// 另外，两条测试跑的是**真实对局**（M3 起由相位机驱动：3 个回合、6 次上场、5 次 pass、
+// 2 次战斗共 9 次出手、3 个单位阵亡、水晶回满 6 次、抽牌 6 次、1 次非法意图被拒，
+// 往返探针那条还额外跑了一次挂起），不是拿两个空状态比哈希 —— 那样测试恒绿、毫无意义。
 
 import { expect, test } from "bun:test";
 import type { CardId, EntityId } from "@prismfront/ir";
 import type { GameEvent } from "../events/index.ts";
-import { M2_HANDLERS, readEntity } from "../handlers/index.ts";
+import { M2_HANDLERS } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
 import { pushAct, suspend } from "../resolve/index.ts";
 import type { Intent, RunMatchOptions } from "../rules/index.ts";
 import { apply, createGame, DEFAULT_RULES, runMatch } from "../rules/index.ts";
 import type { EntityData, GameState } from "../state/index.ts";
 import { getEntity, getZone } from "../state/index.ts";
+import { handOf, passOnce, putInHand, setFace, startMatch, strikeNow } from "../testkit/index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 一、hash(state) —— 稳定的结构化哈希
@@ -266,7 +268,7 @@ class Marker {
 // 三、对局夹具：一局**真的在做功**的对战
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// M2 没有卡表（那是 M4），`createGame` 造出来的牌库实体卡面全是 0，
+// M3 之前没有卡表（那是 M4），`createGame` 造出来的牌库实体卡面全是 0，
 // 所以走查/确定性测试都得自己把卡面写进 `entity.base`（`setup` 钩子的用途，
 // 见 rules/run-match.ts）。写 `base` 而不是 `tags`：`tags` 是派生值，
 // 每一步都会被 `refreshAuras` 从 `base` 重算覆盖（框架 §4.1 时序规则 4）。
@@ -274,6 +276,11 @@ class Marker {
 // 实体 id 的分配顺序是写死的（state/create.ts：p0 base → p1 base → p0 牌库 → p1 牌库），
 // 且**与种子无关** —— 洗牌只动 `zones` 里的 id 顺序，不动实体身份。
 // 于是下面这些 id 在任何种子下都指向同一张牌，意图流可以直接按 id 写死。
+//
+// ⚠ 但"这张牌在不在手里"是**随种子变**的（M3 起 `createGame` 会发起手牌）。
+//   所以 `setup` 用 `putInHand` 把六个参战单位强行塞进手牌 —— 于是意图流在任何种子下
+//   都合法，"换种子"这个反例就被精确地限制在**看不见的差异**上（起手发到了哪几张、
+//   牌库剩下的顺序、随机流走到哪了），这正是反例自检想要的对照。
 
 const P0_BASE: EntityId = 1;
 const P1_BASE: EntityId = 2;
@@ -299,75 +306,88 @@ function makeDeck(prefix: string): readonly CardId[] {
 
 const DECKS: readonly [readonly CardId[], readonly CardId[]] = [makeDeck("PF_A"), makeDeck("PF_B")];
 
-/** 参战单位的卡面：`[实体 id, atk, health]`。数值挑得让「几击致死」一目了然。 */
-const FACES: readonly (readonly [EntityId, number, number])[] = [
-  [P0_UNIT_A, 4, 5], // 4/5：一击打死 P1_UNIT_A
-  [P0_UNIT_B, 2, 3], // 2/3：挨 P1_UNIT_B 三下才死
-  [P0_UNIT_C, 3, 2], // 3/2：挨 P1_UNIT_C 一下就死
-  [P1_UNIT_A, 3, 4], // 3/4
-  [P1_UNIT_B, 1, 6], // 1/6：戳三下的那个
-  [P1_UNIT_C, 5, 2], // 5/2
+/** 参战单位的卡面：`[实体 id, atk, health, cost]`。数值挑得让「几击致死」一目了然。 */
+const FACES: readonly (readonly [EntityId, number, number, number])[] = [
+  [P0_UNIT_A, 4, 5, 2], // 4/5：一击打死 P1_UNIT_A
+  [P0_UNIT_B, 2, 3, 2], // 2/3
+  [P0_UNIT_C, 3, 2, 1], // 3/2
+  [P1_UNIT_A, 3, 4, 2], // 3/4
+  [P1_UNIT_B, 1, 6, 2], // 1/6
+  [P1_UNIT_C, 5, 2, 1], // 5/2
 ];
 
-/** 给一张牌写上卡面数值（同时对齐 `tags`，免得在第一次重算之前读到 0）。 */
-function setFace(state: GameState, id: EntityId, atk: number, health: number): void {
-  const card = getEntity(state, id);
-  if (card === undefined) {
-    throw new Error(`夹具错误：实体 ${id} 不存在`);
-  }
-  card.base.atk = atk;
-  card.base.health = health;
-  card.tags.atk = atk;
-  card.tags.health = health;
-}
+/** 六个参战单位，按 `[玩家, 实体 id]`。摆盘时强行塞进各自的手牌（见本节 ⚠）。 */
+const ROSTER: readonly (readonly [0 | 1, EntityId])[] = [
+  [0, P0_UNIT_A],
+  [0, P0_UNIT_B],
+  [0, P0_UNIT_C],
+  [1, P1_UNIT_A],
+  [1, P1_UNIT_B],
+  [1, P1_UNIT_C],
+];
 
 /**
  * 建局之后的一次性摆盘。
  *
  * 按**实体 id** 写卡面，不按牌库位置 —— 于是"哪张牌是 4/5"与种子无关，
- * 换种子只改变**抽牌顺序**，不改变每张牌是什么。这正是第一条测试的反例自检
- * 想要的对照：打出来的每一步都一样，只有手里剩下的牌序不同。
+ * 换种子只改变**发到手里的是哪几张、牌库剩下的顺序**，不改变每张牌是什么。
+ * 这正是第一条测试的反例自检想要的对照：打出来的每一步都一样，只有看不见的部分不同。
  */
 function setup(state: GameState): void {
   for (const player of [0, 1] as const) {
-    for (const id of getZone(state, player, "deck")) {
-      setFace(state, id, 1, 1); // 没被点名的牌给个 1/1，免得留一堆 0 血牌在手里
+    for (const id of [...getZone(state, player, "deck"), ...handOf(state, player)]) {
+      // 没被点名的牌给个 1/1、0 费，免得留一堆 0 血牌在手里，也免得费用挡住意图流。
+      setFace(state, id, { atk: 1, health: 1, cost: 0 });
     }
   }
-  for (const [id, atk, health] of FACES) {
-    setFace(state, id, atk, health);
+  for (const [id, atk, health, cost] of FACES) {
+    setFace(state, id, { atk, health, cost });
+  }
+  for (const [player, id] of ROSTER) {
+    putInHand(state, player, id);
   }
 }
 
 /**
- * 一局完整的意图流：抽牌 → 上场 → 出手 → 死亡 → 打基地，中间夹一条**非法意图**。
+ * 一局完整的意图流：起手调度 → 三轮打牌 → 双 pass 进战斗 → 跨两个回合，
+ * 中间夹一条**非法意图**。
  *
- * 先把整副牌抽光，于是后面每一条 `play_unit` 在**任何种子下**都合法
- * （手里有全部 12 张，只是顺序不同）。这让"换种子"这个反例能精确地只改一件事。
+ * 逐条对应相位机的一条性质，改动它之前先看这份账：
+ *   索引 0        起手调度（双方都不换）→ 相位机跑完 r1 的 round_start
+ *   索引 1..4     行动交替：p0 / p1 轮流打牌，每次 `priority` 换手
+ *   索引 5        **非法**（这张牌已经在场上）→ `wrong_zone`。被拒的路径也必须确定
+ *                 （rules/run-match.ts：非法意图记进 rejected，不中断）
+ *   索引 6..8     ★ **pass 不锁定**：p0 pass 之后 p1 照样能打牌，计数清零，p0 又能再打
+ *   索引 9..10    双 pass → combat → round_end → r2
+ *   索引 11..12   r2 再一次双 pass → r3（此时 initiative 已经轮换过一次）
+ *
+ * 六个参战单位由 `setup` 强行塞进手牌，所以每一条 `play_card` 在**任何种子下**都合法。
  */
 const INTENTS: readonly Intent[] = [
-  { t: "draw", player: 0, count: DECK_SIZE },
-  { t: "draw", player: 1, count: DECK_SIZE },
-  { t: "play_unit", player: 0, card: P0_UNIT_A, slot: 0 },
-  { t: "play_unit", player: 0, card: P0_UNIT_B, slot: 1 },
-  { t: "play_unit", player: 0, card: P0_UNIT_C, slot: 2 },
-  { t: "play_unit", player: 1, card: P1_UNIT_A, slot: 0 },
-  { t: "play_unit", player: 1, card: P1_UNIT_B, slot: 1 },
-  { t: "play_unit", player: 1, card: P1_UNIT_C, slot: 2 },
-  // 非法：这张牌已经在场上了 → wrong_zone。被拒的路径也必须是确定的
-  // （rules/run-match.ts：非法意图记进 rejected，不中断）。
-  { t: "play_unit", player: 0, card: P0_UNIT_A, slot: 3 },
-  { t: "strike", player: 0, attacker: P0_UNIT_A, target: P1_UNIT_A }, // 4 打 3/4 → 死
-  { t: "strike", player: 1, attacker: P1_UNIT_B, target: P0_UNIT_B }, // 1 打 2/3
-  { t: "strike", player: 1, attacker: P1_UNIT_C, target: P0_UNIT_C }, // 5 打 3/2 → 死
-  { t: "strike", player: 0, attacker: P0_UNIT_B, target: P1_BASE }, // 2 打进对方基地
-  { t: "strike", player: 1, attacker: P1_UNIT_B, target: P0_UNIT_B }, // 累计 2
-  { t: "strike", player: 1, attacker: P1_UNIT_B, target: P0_UNIT_B }, // 累计 3 → 死
+  { t: "mulligan", player: 0, toss: [[], []] },
+  { t: "play_card", player: 0, card: P0_UNIT_A, slot: 0 },
+  { t: "play_card", player: 1, card: P1_UNIT_A, slot: 0 },
+  { t: "play_card", player: 0, card: P0_UNIT_B, slot: 1 },
+  { t: "play_card", player: 1, card: P1_UNIT_B, slot: 1 },
+  { t: "play_card", player: 0, card: P0_UNIT_A, slot: 3 }, // 非法：已经在场上
+  { t: "pass", player: 0 },
+  { t: "play_card", player: 1, card: P1_UNIT_C, slot: 2 }, // 对手行动 ⇒ pass 计数清零
+  { t: "play_card", player: 0, card: P0_UNIT_C, slot: 2 },
+  { t: "pass", player: 1 },
+  { t: "pass", player: 0 }, // 连续两次 → combat → r2
+  { t: "pass", player: 1 },
+  { t: "pass", player: 0 }, // 再来一次 → r3
 ];
 
-/** 架构 §6.1 的 `{ seed, decks, intents }` 三元组（`rules` 缺省 = 引擎自带的 DEFAULT_RULES）。 */
+/**
+ * 架构 §6.1 的 `{ seed, decks, intents }` 三元组（`rules` 缺省 = 引擎自带的 DEFAULT_RULES）。
+ *
+ * **钉住先手**：M3 起首回合先手是随机掷的（v2 §36），不钉住的话换种子会连
+ * "谁先行动"一起换掉，静态意图流就不再是同一局 —— 那样反例自检验的就不是哈希了。
+ * 洗牌照常进行，随机流仍然由种子驱动。
+ */
 function matchOptions(seed: number, intents: readonly Intent[] = INTENTS): RunMatchOptions {
-  return { seed, decks: DECKS, intents, setup };
+  return { seed, decks: DECKS, intents, setup, game: { firstPlayer: 0 } };
 }
 
 const SEED = 0x9f1;
@@ -423,31 +443,40 @@ test("同 seed 同意图序列 → 终局状态哈希一致", () => {
 
   // ── 这一局真的在做功 ─────────────────────────────────────────────────────
   // 不加这一段，两个"什么都没发生"的空状态也能让上面的断言全绿。
-  expect(countOf(a.events, "card_drawn")).toBe(DECK_SIZE * 2);
+  // 三个回合 × 双方：3 次 round_start（各发一次水晶、抽一张）、2 次战斗、6 次上场、5 次 pass。
+  expect(countOf(a.events, "round_began")).toBe(3);
+  expect(countOf(a.events, "round_ended")).toBe(2);
+  expect(countOf(a.events, "combat_began")).toBe(2);
+  expect(countOf(a.events, "combat_ended")).toBe(2);
+  expect(countOf(a.events, "crystal_gained")).toBe(6);
+  expect(countOf(a.events, "card_drawn")).toBe(6);
+  expect(countOf(a.events, "action_taken")).toBe(6);
+  expect(countOf(a.events, "card_played")).toBe(6);
   expect(countOf(a.events, "unit_summoned")).toBe(6);
-  expect(countOf(a.events, "struck")).toBe(6);
-  expect(countOf(a.events, "damaged")).toBe(6);
+  expect(countOf(a.events, "player_passed")).toBe(5);
+  // 两次战斗真的打了（v2 §4.2）：r1 六个单位对位互殴 6 击、死 3 个；
+  // r2 场上只剩 3 个还能出手的单位 ⇒ 3 击、无人阵亡。
+  expect(countOf(a.events, "struck")).toBe(9);
+  expect(countOf(a.events, "damaged")).toBe(9);
   expect(countOf(a.events, "unit_died")).toBe(3);
-  expect(a.rejected).toEqual([{ index: 8, code: "wrong_zone" }]);
+  expect(a.rejected).toEqual([{ index: 5, code: "wrong_zone" }]);
   expect(a.state.seq).toBe(INTENTS.length - 1); // 被拒的那条不推进 seq
   expect(a.state.eventLog).toEqual([]); // 事件不在状态里积压
-  // 死亡结算真的搬了实体（p0 先死 UNIT_C 再死 UNIT_B）。
-  expect(getZone(a.state, 0, "graveyard")).toEqual([P0_UNIT_C, P0_UNIT_B]);
-  expect(getZone(a.state, 1, "graveyard")).toEqual([P1_UNIT_A]);
-  expect(a.state.slots[0]).toEqual([P0_UNIT_A, null, null, null, null, null, null, null, null]);
-  expect(a.state.slots[1]).toEqual([
-    null,
-    P1_UNIT_B,
-    P1_UNIT_C,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-  ]);
-  // 基地挨了 2 点但没归零，对局还没结束；p0 的基地一次都没挨打（出手是单向的）。
-  expect(getEntity(a.state, P1_BASE)?.damage).toBe(2);
+  // 六个单位都真的站上了战线（双方同索引对齐，v2 §0 规则 1），随后被战斗清掉三个：
+  //   0 号格 4/5 vs 3/4 → 对面死；1 号格 2/3 vs 1/6 → 都活；2 号格 3/2 vs 5/2 → 同归于尽。
+  expect(a.state.slots[0]).toEqual([P0_UNIT_A, P0_UNIT_B, null, ...Array(6).fill(null)]);
+  expect(a.state.slots[1]).toEqual([null, P1_UNIT_B, null, ...Array(6).fill(null)]);
+  expect(getZone(a.state, 0, "graveyard")).toEqual([P0_UNIT_C]);
+  expect(getZone(a.state, 1, "graveyard")).toEqual([P1_UNIT_A, P1_UNIT_C]);
+  // 相位机真的跑了三个回合：水晶上限递增、先手轮换（alternate）、行动权回到先手方。
+  expect(a.state.round).toBe(3);
+  expect(a.state.phase).toBe("actions");
+  expect(a.state.players[0].crystalCap).toBe(7); // min(5 + (3-1)*1, 10)
+  expect(a.state.initiative).toBe(0); // r1 p0 → r2 p1 → r3 p0
+  expect(a.state.priority).toBe(0);
+  expect(a.state.consecutivePasses).toBe(0);
+  // r2 的战斗里 p0 的 0 号格对着一个空格 ⇒ 4 点打进 p1 基地；p0 基地对位都有人挡着。
+  expect(getEntity(a.state, P1_BASE)?.damage).toBe(4);
   expect(getEntity(a.state, P0_BASE)?.damage).toBe(0);
   expect(a.state.winner).toBeNull();
   // 洗牌真的推进了随机流（否则"同 seed"这件事无从谈起）。
@@ -472,14 +501,12 @@ test("反例自检：换一个 seed，第一条测试立刻会红", () => {
 test("反例自检：意图流多一条，第一条测试立刻会红", () => {
   const a = runMatch(matchOptions(SEED));
   const longer = runMatch(
-    matchOptions(SEED, [
-      ...INTENTS,
-      { t: "strike", player: 0, attacker: P0_UNIT_A, target: P1_BASE },
-    ]),
+    matchOptions(SEED, [...INTENTS, { t: "pass", player: 0 }, { t: "pass", player: 1 }]),
   );
 
   expect(hash(longer.state)).not.toBe(hash(a.state));
-  expect(getEntity(longer.state, P1_BASE)?.damage).toBe(6); // 2 + 4
+  expect(longer.state.round).toBe(4); // 多打完一个回合
+  expect(longer.state.players[0].crystalCap).toBe(8);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -488,16 +515,35 @@ test("反例自检：意图流多一条，第一条测试立刻会红", () => {
 
 /**
  * 一个**局中**状态：双方各有单位在场、有人挂了彩、墓地非空、手牌非空、
- * 随机流已推进、`seq` 非零。
+ * 随机流已推进、`seq` 非零，且轮到 p0 行动。
  *
- * 取的是完整意图流的前 12 条（打完 p1 的两次出手，停在 p0 的 UNIT_B 还剩 2 血那一刻）。
+ * 取完整意图流的前 6 条（r1 的四次上场 + 那条被拒的），再手工打两次出手 ——
+ * 出手用 `testkit` 的 `strikeNow` 驱动，走的是与战斗快照**同一条**
+ * `act.strike → act.hit` 管线，只是绕开了"哪个相位允许出手"这层外壳。
+ * 这里刻意**不**靠战斗阶段来制造伤害：战斗是双向同时结算的，
+ * 而本夹具要的是一个"一边挂了彩、另一边没死透"的不对称局面。
+ * 局中状态必须带上死亡与伤害：那是纯数据探针最容易被腐化的一块
+ * （`damage` 写在实体上、墓地是 `zones` 的重排、`playOrder` 要保留）。
  */
-function midGameState(): GameState {
-  return runMatch(matchOptions(SEED, INTENTS.slice(0, 12))).state;
+function woundedMidState(): GameState {
+  const opened = runMatch(matchOptions(SEED, INTENTS.slice(0, 6))).state;
+  const killed = strikeNow(opened, P0_UNIT_A, P1_UNIT_A); // 4 打 3/4 → 死
+  return strikeNow(killed.state, P1_UNIT_B, P0_UNIT_B).state; // 1 打 2/3 → 剩 2
 }
 
-/** 落在这个局中状态上的下一条意图：5 点打在只剩 2 血的 UNIT_B 上 → 出手、伤害、死亡一条链。 */
-const MID_INTENT: Intent = { t: "strike", player: 1, attacker: P1_UNIT_C, target: P0_UNIT_B };
+/** 在 {@link woundedMidState} 之上再 pass 一次：`consecutivePasses` 停在 1，轮到 p1。 */
+function midGameState(): GameState {
+  return passOnce(woundedMidState()).state;
+}
+
+/**
+ * 落在这个局中状态上的下一条意图：p1 的第二次 pass。
+ *
+ * 挑它而不是挑一条"打一张牌"，是因为它是**跨相位边界**的那一步 ——
+ * 双 pass → combat → round_end → round_start，一条意图带出一整段相位推进，
+ * 顺带把水晶回满、抽牌、先手轮换全走一遍。往返探针扎在这种步子上才有意思。
+ */
+const MID_INTENT: Intent = { t: "pass", player: 1 };
 
 test("序列化往返不改变结算结果", () => {
   const s = midGameState();
@@ -517,14 +563,33 @@ test("序列化往返不改变结算结果", () => {
   expect(fromDisk.events).toEqual(direct.events);
 
   // ── 这一步真的在做功 ─────────────────────────────────────────────────────
-  // 出手 → 伤害 → 死亡，整条链都跑了；换成一条什么都不做的意图，本测试就成了空转。
-  expect(namesOf(direct.events)).toEqual(["struck", "damaged", "unit_died"]);
-  expect(getZone(direct.state, 0, "graveyard")).toEqual([P0_UNIT_C, P0_UNIT_B]);
-  expect(direct.state.slots[0][1]).toBeNull();
+  // 一条 pass 带出整段相位推进；换成一条什么都不做的意图，本测试就成了空转。
+  expect(namesOf(direct.events)).toEqual([
+    "player_passed",
+    "combat_began",
+    // 战斗快照（v2 §4.2）：p0 的 0 号格对着一个空格 → 打基地；1 号格两边对位互殴。
+    "struck",
+    "damaged",
+    "struck",
+    "damaged",
+    "struck",
+    "damaged",
+    "combat_ended",
+    "round_ended",
+    "round_began",
+    "crystal_gained",
+    "crystal_gained",
+    "card_drawn",
+    "card_drawn",
+  ]);
+  expect(direct.state.round).toBe(2);
+  expect(direct.state.initiative).toBe(1); // alternate：r1 是 p0，r2 换手
+  expect(direct.state.players[0].crystalCap).toBe(6);
   // 局中状态确实是"局中"：手牌、墓地、伤害、seq 全都非空。
-  expect(getZone(s, 0, "hand")).toHaveLength(DECK_SIZE - 3);
+  expect(getZone(s, 0, "hand").length).toBeGreaterThan(0);
   expect(getZone(s, 1, "graveyard")).toEqual([P1_UNIT_A]);
   expect(getEntity(s, P0_UNIT_B)?.damage).toBe(1);
+  expect(s.slots[0][0]).toBe(P0_UNIT_A);
   expect(s.seq).toBeGreaterThan(0);
   // apply 是纯函数：两次结算互不干扰，入参状态一字未改（框架 §3.2）。
   expect(hash(s)).toBe(hash(revived));
@@ -628,10 +693,7 @@ test("状态在对局的每个阶段都是纯数据（★ 只查 apply 之后的
   const stages: readonly (readonly [string, GameState])[] = [
     ["建局：createGame 的直接产物", createGame(DEFAULT_RULES, DECKS, SEED)],
     ["建局 + 摆盘：setup 钩子改过的那一份", freshState()],
-    [
-      "一次 apply 之后：抽牌 handler 刚写过的状态",
-      applyOk(freshState(), { t: "draw", player: 0, count: 2 }).state,
-    ],
+    ["一次 apply 之后：起手调度与 round_start 刚写过的状态", startMatch(freshState()).state],
     ["局中：单位在场、有伤害、墓地非空", midGameState()],
     ["挂起：stack 非空、pendingInput 非空", suspendedMidState()],
     ["终局：跑完整条意图流", runMatch(matchOptions(SEED)).state],
@@ -666,7 +728,12 @@ test("反例自检：BigInt 与循环引用让往返探针直接抛错（更响�
 // 而那正好是 JSON 往返看不出、哈希看得出的差别。
 
 /**
- * 一张会**挂起**的 handler 表：`act.strike` 改成"先压续跑动作、再挂起等选目标"。
+ * 一张会**挂起**的 handler 表：`act.move` 改成"先压续跑动作、再挂起等对手选目标"。
+ *
+ * 挂在 `act.move` 上是因为 M3 之后**只有它能被玩家意图直接触到**
+ * （`play_card` 压的就是它）—— `act.strike` 已经没有对应的意图了（v2 §3.4 删掉了
+ * `act.attack`，出手只由战斗快照与卡牌效果驱动）。这张表模拟的是一张
+ * 「打出时：由对手选一个单位受到 6 点伤害」的牌，M4 起这类效果会由真求值器展开。
  *
  * 顺序（先 push 再 suspend）是 `resolve/suspend.ts` 文件头写死的契约：
  * `resume()` 把玩家的选择写进**栈顶条目**的 `ctx.chosen`，所以续跑动作必须先在栈顶。
@@ -676,21 +743,12 @@ test("反例自检：BigInt 与循环引用让往返探针直接抛错（更响�
 const SUSPENDING_DEPS: ResolveDeps = {
   handlers: {
     ...M2_HANDLERS,
-    "act.strike": (state, ctx, act) => {
-      const attacker = readEntity(state, ctx, act.attacker);
-      const target = readEntity(state, ctx, act.target);
-      if (attacker === undefined || target === undefined) {
-        return;
-      }
-      pushAct(
-        state,
-        { op: "act.hit", target: { op: "sel.chosen" }, amount: attacker.tags.atk },
-        ctx,
-      );
+    "act.move": (state, ctx) => {
+      pushAct(state, { op: "act.hit", target: { op: "sel.chosen" }, amount: 6 }, ctx);
       suspend(state, {
         player: 1,
         kind: "select_target",
-        options: [target.id, attacker.id],
+        options: [P0_UNIT_B, P1_UNIT_B],
         optional: false,
         deadline: null,
       });
@@ -698,9 +756,12 @@ const SUSPENDING_DEPS: ResolveDeps = {
   },
 };
 
-/** 局中状态 + 一次会挂起的出手 ⇒ `stack` 非空、`pendingInput` 非空。 */
+/** 「打出时由对手选目标」的那条意图：p0 用 1 费打出 UNIT_C（此时 `priority` 正是 p0）。 */
+const SUSPENDING_INTENT: Intent = { t: "play_card", player: 0, card: P0_UNIT_C, slot: 2 };
+
+/** 局中状态 + 一次会挂起的打牌 ⇒ `stack` 非空、`pendingInput` 非空。 */
 function suspendedMidState(): GameState {
-  return applyOk(midGameState(), MID_INTENT, SUSPENDING_DEPS).state;
+  return applyOk(woundedMidState(), SUSPENDING_INTENT, SUSPENDING_DEPS).state;
 }
 
 test("挂起态整个落盘再 resume，结果与不落盘逐字一致（框架 §4.2 + 架构 §6.1 第二条）", () => {
@@ -709,8 +770,12 @@ test("挂起态整个落盘再 resume，结果与不落盘逐字一致（框架 
 
   // 挂起点确实成立：结算在半路停下，续跑动作留在栈上。
   expect(live.pendingInput?.kind).toBe("select_target");
-  expect(live.pendingInput?.options).toEqual([P0_UNIT_B, P1_UNIT_C]);
+  expect(live.pendingInput?.options).toEqual([P0_UNIT_B, P1_UNIT_B]);
   expect(live.stack).toHaveLength(1);
+  // ★ 相位记账在结算之前就做完了（rules/phase.ts 的设计）：水晶已扣、行动权已换手，
+  //   所以这个挂起点可以安全地落盘 —— 恢复之后"这个行动算不算做完了"没有歧义。
+  expect(live.players[0].crystals).toBe(0);
+  expect(live.priority).toBe(1);
   expect(hash(fromDisk)).toBe(hash(live));
   expect(canonicalize(fromDisk)).toBe(canonicalize(live));
 
@@ -722,14 +787,14 @@ test("挂起态整个落盘再 resume，结果与不落盘逐字一致（框架 
   expect(canonicalize(revived.state)).toBe(canonicalize(direct.state));
   expect(revived.events).toEqual(direct.events);
 
-  // 选择真的驱动了续跑动作：sel.chosen 选中 UNIT_B，5 点打在只剩 2 血的它身上 → 死。
+  // 选择真的驱动了续跑动作：sel.chosen 选中 P0_UNIT_B，6 点打在只剩 2 血的它身上 → 死。
   expect(namesOf(direct.events)).toEqual(["damaged", "unit_died"]);
   expect(direct.state.pendingInput).toBeNull();
   expect(direct.state.stack).toEqual([]);
-  expect(getZone(direct.state, 0, "graveyard")).toEqual([P0_UNIT_C, P0_UNIT_B]);
+  expect(getZone(direct.state, 0, "graveyard")).toEqual([P0_UNIT_B]);
 
   // 反例自检：换一个选择就是另一局 —— 挂起点不是一个走过场的形式。
-  const other = applyOk(fromDisk, { t: "respond", player: 1, chosen: P1_UNIT_C }, SUSPENDING_DEPS);
+  const other = applyOk(fromDisk, { t: "respond", player: 1, chosen: P1_UNIT_B }, SUSPENDING_DEPS);
   expect(hash(other.state)).not.toBe(hash(direct.state));
-  expect(getZone(other.state, 1, "graveyard")).toEqual([P1_UNIT_A, P1_UNIT_C]);
+  expect(getZone(other.state, 1, "graveyard")).toEqual([P1_UNIT_A, P1_UNIT_B]);
 });
