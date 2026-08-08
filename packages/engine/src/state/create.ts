@@ -41,7 +41,9 @@ export interface CreateInitialStateOptions {
    */
   decks: readonly [readonly CardId[], readonly CardId[]];
   /**
-   * 卡组外的英雄卡（v2.1 §11.1：30 张任意混色 + 3 张英雄）。
+   * 卡组外的英雄卡（v2.1 §11.1：3 名互不相同的英雄 + 30 张卡组，
+   * 30 张只能来自这 3 名英雄的专属卡池）。卡组构成的合法性由 lint / 建局前校验负责，
+   * engine 只收已经合法的 id 列表。
    *
    * 落在 `fountain`（复燃泉）区，`respawnAt = 1` ⇒ 从 r1 起可在 deploy 阶段部署。
    * 「一回合部署几名」由 `rules.heroes.deploySchedule` 决定（M6 实现）。

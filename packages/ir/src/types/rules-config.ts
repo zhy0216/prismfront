@@ -62,7 +62,16 @@ export interface RulesConfig {
    */
   baseHp: number;
   deck: {
+    /**
+     * 牌库大小。**v2.1 §11.1 配额制起（2026-08-08）这是派生量**
+     * `= heroes.perDeck × heroes.cardsPerHero`（3 × 10 = 30），不是自由旋钮。
+     * M11 的配置校验要断言二者一致；M12 调方差先动 `drawPerRound`（决策 #12）。
+     */
     size: number;
+    /**
+     * 同名卡上限。**2 → 3**（2026-08-08，决策 #12 取代决策 #4）。
+     * 与配额耦合：3 份 = 单英雄 10 张配额的 30%，不是旧口径下 30 张牌库的 6.7%。
+     */
     maxCopies: number;
     startingHand: number;
     drawPerRound: number;
@@ -74,7 +83,12 @@ export interface RulesConfig {
   reconnectSeconds: number;
   /** 英雄（v2.1 §11.5）。 */
   heroes: {
-    /** 卡组外的英雄张数（v2.1 §11.1：30 张任意混色 + 3 张英雄）。 */
+    /**
+     * 卡组外的英雄张数（v2.1 §11.1，2026-08-08 补订：3 名**互不相同**的英雄
+     * + 30 张卡组，30 张只能来自这 3 名英雄的专属卡池并集，
+     * 且**每名英雄恰好带 `cardsPerHero` 张**）。
+     * 归属（`CardData.hero`）是纯构筑层的事，engine 不读，见 §11.4b。
+     */
     perDeck: number;
     /**
      * 部署节奏。

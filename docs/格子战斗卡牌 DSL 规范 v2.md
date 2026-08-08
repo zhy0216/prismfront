@@ -310,7 +310,9 @@ interface RulesConfig {
   // 与双 pass 规则天然咬合——"何时 pass"从纯节奏决策升级为资源决策：
   // 多打一张牌 = 让出下回合先手。建议试玩时与 "alternate" 对比。
   heroHp: 30;
-  deck: { size: 30; maxCopies: 2; startingHand: 4; drawPerRound: 1; fatigue: true };
+  // size 是派生量 = heroes.perDeck × heroes.cardsPerHero（§11.1 配额制）；
+  // maxCopies 2 → 3（2026-08-08，决策 #12）
+  deck: { size: 30; maxCopies: 3; startingHand: 4; drawPerRound: 1; fatigue: true };
   playerActions: ("play_card" | "move_unit" | "set_direction")[];  // 开放问题的开关
   actionSeconds: 30;
   reconnectSeconds: 90;
@@ -534,13 +536,34 @@ defineCard({
 
 ---
 
-## 11. v2.1 增补：英雄、色门与融合卡（构筑规则定案，2026-08-05）
+## 11. v2.1 增补：英雄、色门与融合卡（构筑规则定案，2026-08-05；构筑层补订 2026-08-08）
 
 规范尚未实现，破坏性改名直接并入，无兼容负担。IR 版本记 2.1.0。
 
-### 11.1 构筑规则
+### 11.1 构筑规则（2026-08-08 补订：混色自由 → 英雄专属卡 + 配额制）
 
-30 张卡组任意混色 + **卡组外 3 张英雄卡**（颜色自选，可重复，如三红）。
+**卡组外 3 张英雄卡**（互不相同，**不可重复**）+ **30 张卡组**。
+
+每张非英雄卡**恰好归属一名英雄**（`data.hero`，**无中立卡**）。30 张只能从
+**所选 3 名英雄的专属卡池并集**里挑 —— 选英雄即选可用卡池。
+
+**配额制**：每名英雄**恰好带 10 张**自己的专属卡，同名卡**至多 3 份**。
+`3 名 × 10 张 = 30`，所以 `deck.size` 不再是自由旋钮，而是
+**派生量 `perDeck × cardsPerHero`**（校验须断言二者一致，§11.4b）。
+
+于是构筑决策是**每名英雄的 10 个槽位怎么分配份数**：
+把 10 张压在 3-4 种卡上（每种 3 份，抽稳但打法单一），还是摊到 8-10 种（曲线全但抽不稳）。
+**推论**：每名英雄的专属卡种类数必须 `≥ ⌈cardsPerHero / maxCopies⌉ = 4`，
+否则凑不满配额——这是英雄扩池时的硬下限，卡池校验要挡住。
+
+**这条限制只作用于组牌，不作用于打出。** 卡进了手牌之后能不能打，只看色门（§11.4）：
+`colors` 里每个颜色都有己方存活在场英雄即可，**与这张卡归属谁无关**。
+所属英雄阵亡不会锁死它的专属卡——只要同色还有别的光源在场，照打不误。
+（PF1 每色恰好一名英雄，两条判断的结果永远重合，但**引擎不许把它们实现成同一条判断**：
+这是英雄扩池后第一个会炸的地方。）
+
+双色（融合）卡不是特例：它同样只归属一名英雄，只是这名英雄拥有一张跨色的专属卡。
+带它只需选中该英雄；打出仍要两色光源同时在场。
 
 ### 11.2 英雄是占格参战的单位，"基地"接管承伤
 
@@ -572,10 +595,40 @@ defineCard({
 - **融合卡** = `colors` 长度 2 → 需两色英雄同时在场。r1 只部署两色 → 第三色及其融合 r2 起才可用
 - 校验新增：`colors` 长度 1-2；`kind:"hero"` → `colors` 恰 1、无 `cost`、不入 30 张卡组
 
+### 11.4b 专属卡归属（构筑层，2026-08-08 新增）
+
+- `card.data.hero: CardId` **新增**：所属英雄，指向一张 `kind:"hero"` 的卡。
+  **纯构筑层字段** —— `play_card` 合法性、结算、投影、DSL 求值**一律不读它**。
+  消费者只有两个，且都在引擎之外：`ir:validate` 的 lint，与**喂给 `createGame` 之前**的
+  卡组校验。`packages/engine` 里对 `data.hero` 的引用数应当恒为 **0**
+  （engine 只收已经合法的 id 列表）
+- 归属 vs 色门是两条独立判断，不要合并（§11.1）
+- 校验新增：
+  - **可收藏的非英雄卡 → `hero` 必填**，且引用的 id 存在、`kind` 确为 `"hero"`
+    （token / `collectible:false` 的卡不进卡组，免除此项）
+  - `kind:"hero"` 的卡**不写** `hero`
+  - **专属卡的 `colors` 必须包含其所属英雄的颜色**（红英雄可以有红蓝融合专属卡，
+    不能有纯蓝专属卡——否则色门叙事与归属叙事脱钩）
+  - **卡池下限**：每名英雄的专属卡**种类数 ≥ `⌈cardsPerHero / maxCopies⌉`**
+    （当前 = ⌈10/3⌉ = 4），否则该英雄凑不满配额，是**卡池数据错误不是玩家错误**，
+    必须在 `ir:validate` 挡住，不能等到组牌时才报
+- 组牌校验（喂给 `createGame` 之前）：
+  - 3 名英雄**互不相同**
+  - 卡组内每张卡的 `hero` ∈ 所选 3 名英雄
+  - **每名英雄名下恰好 `cardsPerHero` 张**（配额制，不是上限也不是下限）
+  - 同名卡至多 `deck.maxCopies` 份
+  - `deck.size === heroes.perDeck × heroes.cardsPerHero`（配置自洽性，
+    在**配置校验期**就抛错，与 `playerActions` 那条同一处理方式，决策 #3）
+
 ### 11.5 RulesConfig 增补
 
 ```ts
-heroes: { perDeck: 3, deploySchedule: [2, 1], respawnDelay: 1 };
+heroes: {
+  perDeck: 3, deploySchedule: [2, 1], respawnDelay: 1,
+  allowDuplicates: false,
+  cardsPerHero: 10,        // 每名英雄的配额，deck.size = perDeck × cardsPerHero
+};
+deck: { size: 30, maxCopies: 3, ... };   // maxCopies 2 → 3（决策 #12 取代决策 #4）
 ```
 
 ---
