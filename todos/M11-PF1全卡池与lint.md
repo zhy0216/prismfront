@@ -75,7 +75,8 @@ risk: normal
   - [ ] 引用完整性（**含 `data.hero` 指向的 id 存在且 `kind` 确为 `"hero"`**）
   - [ ] 上下文合法性
   - [ ] 确定性（aura / intercept.cond 内禁 `*.random` 与 `slot.random_empty`）
-  - [ ] 编写子集（禁 `sel.entity`）
+  - [ ] 编写子集（禁 `sel.entity`；**并禁 `act.strike.amount`** —— M5/T5 加的
+        运行时超集字段，只由战斗快照填，bundle 里出现即违规，见 IR §5.6）
   - [ ] v2 §9 的六条新增校验
 - [ ] **色轮越权 lint**：数据来源就是 M1 建的 `COLOR_OWNERSHIP` 常量。
       红卡出现 `act.swap` → 报错。

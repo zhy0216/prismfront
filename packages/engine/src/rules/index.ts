@@ -28,9 +28,8 @@
 // 其中「不做中途死亡结算」与「触发器只入栈不结算」这两条走的是一条**旁路管线**，
 // 取舍写在那个文件的头部。direction 作为普通 Tag 也在那里落地 —— 战斗读的是
 // 派生值 `tags.direction`，全引擎**没有一行 direction 的特判**。
-// 第 ② 步的「记录后全部冻结」另有一道**运行时哨兵**（抛 `StrikeAmountDriftError`）：
-// M3 里恒真，M5 引入"能在批次中途改 atk 的拦截器/触发器"时当场抛。
-// 它是临时防线，M5 按 `PlannedStrike.amount` 的 TODO 二选一落地之后退役。
+// 第 ② 步的「记录后全部冻结」在 M5/T5 有了实现：冻结值随 `act.strike.amount`
+// （IR §5.6 运行时超集字段）走完管线，M3 那道运行时哨兵与它的错误类已随之删除。
 //
 // 其余仍在别的里程碑：DSL 求值器与卡表（M4，`play_card` 的脚本接入点已标出）、
 // 触发器匹配与光环源（M5）、英雄的阵亡/复活语义（M6，部署动作本身已在 `phase.ts`）。
@@ -38,8 +37,8 @@
 // 上层 `src/index.ts` 由外层统一组装，本目录不参与。
 
 export { apply } from "./apply.ts";
-export type { PlannedStrike, TriggerQueue } from "./combat.ts";
-export { planStrikes, resolveStrikes, StrikeAmountDriftError } from "./combat.ts";
+export type { PlannedStrike } from "./combat.ts";
+export { planStrikes, resolveStrikes } from "./combat.ts";
 export { DEFAULT_RULES } from "./config.ts";
 export type { CreateGameOptions } from "./create-game.ts";
 export { createGame, dealStartingHands, dealTop, shuffleZone } from "./create-game.ts";

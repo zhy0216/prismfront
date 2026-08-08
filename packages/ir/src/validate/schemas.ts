@@ -180,7 +180,9 @@ export const ACT_SCHEMAS = {
   "act.move_to": { target: "sel", to: "slot" },
   "act.shift": { target: "sel", delta: "num" },
   "act.swap": { a: "sel", b: "sel" },
-  "act.strike": { attacker: "sel", target: "sel" },
+  // amount 是运行时超集字段（IR §5.6，见 types/act.ts）：L1/L2 认它，
+  // 「编写期不许出现」由 L3 的编写子集那一条管（M11，同禁 sel.entity）。
+  "act.strike": { attacker: "sel", target: "sel", amount: "?num" },
   "act.gain_crystal": { player: "sel", amount: "num" },
   "act.gain_crystal_cap": { player: "sel", amount: "num" },
   "act.when": { cond: "cond", then: "act[]", else: "?act[]" },

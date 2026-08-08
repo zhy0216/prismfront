@@ -8,6 +8,9 @@
 //
 // 内部结构：`src/pf1/{R,G,B,heroes,tokens}/` + 同目录 `*.test.ts`（测试策略第 1 层：
 // 每张卡 3 行，新增卡必须带测试）。
+// 外加一个**不进卡集**的目录 `src/keywords/`（M5/T6）：DSL v2 §8.7 四条 Artifact
+// 关键词的**范式**与它们的表达力验收测试。它刻意不从本文件导出、也不在 `PF1_CARDS` 里
+// —— 那几张卡不进 bundle，理由写在该目录的文件头。
 // 铁律：运行时只依赖 @prismfront/ir；对 @prismfront/engine 只能是 devDependency
 // （架构 §2.2 禁令 4）。不含引擎逻辑。
 

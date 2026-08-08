@@ -226,6 +226,11 @@ export function Swap(a: Sel, b: Sel): ActNode<"act.swap"> {
 /**
  * `Strike(SELF, COMBAT_TARGET(SELF))`（v2 §7）→ `act.strike`：
  * 立即出手一次，`amount` = attacker **当前** atk。内部走 `act.hit` 管线并发 `struck` 事件。
+ *
+ * ★ **刻意只收两个参数**：`act.strike.amount`（IR §5.6 的运行时超集字段，
+ * 战斗第 ② 步冻结下来的出手数值，v2 §4.2）由引擎自己填，编写层不开放 ——
+ * 与本文件不提供 `sel.entity` 构造器是同一条边界（运行时超集永不来自外部输入）。
+ * 想让卡面写出"出手但伤害改为 X"，那是改 `act.strike` 的语义，得走 major bump。
  */
 export function Strike(attacker: Sel, target: Sel): ActNode<"act.strike"> {
   return { op: "act.strike", attacker, target };

@@ -54,15 +54,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 本文件**没做**的一件事
 // ═══════════════════════════════════════════════════════════════════════════
-// **卡牌的 `play` 脚本**：`play_card` 目前只把牌放到指定格。跑脚本要求值器（M4），
-// 接入点见 {@link playCard} 里标出的那一行。
+// **卡牌的 `play` 脚本**：`play_card` 目前只把牌放到指定格。求值器（M4）已就位，
+// 缺的只是接线（M6）。接入点、以及"那一段必须**内联**、不要压 `<cardId>#play` 的引用
+// 条目"这条规则，见 {@link playCard} 里标出的那一段。
 
 import type { Act, Duration } from "@prismfront/ir";
 import { playerEntityId } from "../eval/index.ts";
 import type { GameEvent } from "../events/index.ts";
 import { emitEvent } from "../events/index.ts";
 import { drawOne, moveToZone, placeOnSlot } from "../handlers/index.ts";
-import type { ResolveDeps } from "../resolve/index.ts";
+import type { ResolveDeps, TriggerDeps } from "../resolve/index.ts";
 import { pushActs, queueTriggers, refreshAuras, resolve } from "../resolve/index.ts";
 import type { CtxBindings, EntityData, GameState, PlayerId } from "../state/index.ts";
 import {
@@ -135,10 +136,10 @@ export function advancePhases(state: GameState, deps: ResolveDeps): GameEvent[] 
         }
         break;
       case "round_end":
-        runStep(state, () => endRound(state));
+        runStep(state, deps, () => endRound(state, deps));
         break;
       case "round_start":
-        runStep(state, () => beginRound(state));
+        runStep(state, deps, () => beginRound(state));
         break;
       default:
         // mulligan / deploy / actions / over —— 等待相位，停在这里。
@@ -198,8 +199,8 @@ interface StepActs {
  * 而那种漏发没有任何编译期防线，只能靠这条约定守住。
  * （`combat_began` / `combat_ended` 是同一条约定，但由 {@link runCombat} 自己排队 ——
  * 战斗不走本函数，理由见 {@link advancePhases} 上的 ⚠。）
- * （`queueTriggers` 在 M5 之前是**语义正确的退化实现** —— 无触发器源 ⇒ 排队 0 条 ——
- * 所以现在调它没有副作用，只是把接缝先接对。）
+ * （M5/T1 起 `queueTriggers` 是真匹配，这条接缝上真的会排出触发器；`deps` 因此要一路
+ * 传到这里 —— 它只有这一个去处，本函数不执行任何动作。）
  *
  * ── ★ 为什么排队在前、压栈在后 ★ ─────────────────────────────────────────
  * 栈是 LIFO：**后**压的**先**执行。所以这个顺序等价于
@@ -208,13 +209,35 @@ interface StepActs {
  * 反过来先压动作再排触发器，会得到「战吼在随从上场之前结算」「疲劳伤害在
  * round_began 的触发器之后才落地」这类颠倒 —— 而颠倒后的结果往往"看起来也挺合理"，
  * 最容易一路混进产线（`resolve/push.ts` 文件头的原话）。
- * 现在两者不可能同时非空（触发器排队是空实现），所以这条顺序**测不出来**，
- * 只能靠这段注释和这一处唯一实现守住。
+ * M5/T1 起两者可以同时非空（打出一张牌 + 一张「每当你打出一张牌…」），
+ * 这条顺序因此**测得出来**了 —— `resolve/__tests__/triggers.test.ts` 末尾那条
+ * 「相位机产的事件同样进触发器」钉着它（断言 `unit_summoned` 排在 `card_drawn` 之前）。
+ *
+ * ── ★ 为什么这里也要 `refreshAuras`（M5/T3 补入）★ ────────────────────────
+ * 框架 §4.1 的第 ⑥ 步只覆盖**流水线**里的动作：`resolve()` 每弹一条就重算一次。
+ * 而相位机是**在流水线之外**改盘面的另一条路 —— {@link playCard} 把牌从手上搬到格子、
+ * `applyDeploy` 把英雄摆上场、{@link beginRound} 抽牌，全都不经过任何一次弹栈。
+ * M5/T3 之前这没有差别（重算是恒等的）；两个 Σ 填上之后差别是**真的**：
+ *   - 打出一张光环随从，若 `script.play` 是空的（本里程碑的常态），栈上一条动作都没有
+ *     ⇒ `resolve()` 一次都不弹 ⇒ 全场的光环加成要等下一次无关的动作才生效；
+ *   - 更要紧的是**战斗快照**：v2 §4.2 第 ② 步取的是「此刻的 atk」= 生效值，
+ *     而 `pass` 这一步（`passAction` 把相位改成 `combat`）同样只走本函数。
+ *     不在这里重算，一个刚上场的光环源就会对本轮战斗完全不起作用。
+ * 排在 `queueTriggers` **之前**：本函数排出去的触发器，其 `cond` 一律在**结算后**的
+ * 盘面上求值。相位机的三个落点（本函数、{@link stripEnchantments}、{@link runCombat}
+ * 的第 ⑤ 步）口径一致 —— 那三处的盘面变化都在发事件之前就全部完成了。
+ * ⚠ `resolve/deaths.ts` 的死亡结算**不在**这三处之列：它的盘面变化恰恰是由那批
+ *   `unit_died` 本身描述的，规范（框架 §4.1 / v2 §4.2 第 ④ 步）又把「亡语」写在
+ *   「光环重算」之前，于是本波亡语的 `cond` 看到的是一个中间盘面。为什么两边可以
+ *   不同、以及为什么不该硬统一，写在那个文件的 `processDeaths` 上。
+ * 本函数这一条由 `resolve/__tests__/auras.test.ts` 的「`runStep` 的光环重算排在
+ * 相位事件的触发器排队之前」钉住。
  */
-function runStep(state: GameState, body: () => StepActs | null): void {
+function runStep(state: GameState, deps: TriggerDeps, body: () => StepActs | null): void {
   const mark = state.eventLog.length;
   const pending = body();
-  queueTriggers(state, state.eventLog.slice(mark));
+  refreshAuras(state, deps);
+  queueTriggers(state, state.eventLog.slice(mark), deps);
   if (pending !== null) {
     pushActs(state, pending.acts, pending.ctx);
   }
@@ -498,14 +521,24 @@ function applyDeploy(
  * 3. `consecutivePasses = 0`（★ **pass 不锁定**，v2 §4.1：对手行动后计数清零）
  *    + `priority` 交给对手。
  *
- * ── 效果段（M4 的接入点）★ ────────────────────────────────────────────────
+ * ── 效果段（M6 的接入点）★ ────────────────────────────────────────────────
  * 现在只压一条 `act.move` 把牌放到指定格，等价于 M2 的 `play_unit`。真正的
- * `play_card` 还要做两件事，两件都要求值器（M4）：
- *   (a) **区分随从牌与法术牌** —— 需要卡表才知道这张卡是不是要占格；
- *   (b) **跑卡牌的 `play` 脚本** —— 用 `pushScript` 压一条 `<cardId>#play` 的引用条目，
- *       排在 `act.move` **后面**（返回的 `acts` 是执行顺序），于是"上场"先于"战吼"发生，
- *       `unit_summoned` 也就排在战吼的事件之前。
- * 接入点就是本函数末尾返回的那个 `acts` 数组：把 `act.move` 与展开出的脚本一起放进去，
+ * `play_card` 还要做两件事，两件都要卡表（求值器 M4 已就位，缺的是接线）：
+ *   (a) **区分随从牌与法术牌** —— 要 `deps.cards` 才知道这张卡是不是要占格；
+ *   (b) **跑卡牌的 `play` 脚本**（战吼）—— 取 `deps.scripts(card.cardId)?.play`，把那一段
+ *       `Act[]` **内联**接在 `act.move` **后面**（返回的 `acts` 是执行顺序），
+ *       于是"上场"先于"战吼"发生，`unit_summoned` 也就排在战吼的事件之前。
+ *       ★ **不要用 `pushScript` 压一条 `<cardId>#play` 的引用条目**：引擎没有
+ *       `ScriptExpander` 的生产实现 ⇒ `actOfPending` 返回 null ⇒ 整条战吼**静默失效**
+ *       （实测：这么写，打出一张"战吼：抽一张牌"的随从只发得出 `unit_summoned`，
+ *       没有 `card_drawn`，也没有任何错误）。规则的唯一出处是
+ *       `resolve/push.ts` 文件头「条目形态」一节；
+ *       失败形态由 `resolve/__tests__/resolve.test.ts` 的「展不开的脚本引用静默跳过」钉着。
+ *       现成的做法照抄 `testkit` 的 `castCard`：M4/E6 起单卡测试跑的就是
+ *       `pushActs(draft, card.script.play ?? [], ctx)` 这一条内联的路（testkit/index.ts:638）。
+ *       接线上还要补一件事：本函数目前收不到 `deps`，{@link bookkeepIntent} 得把
+ *       {@link runIntentBookkeeping} 手里那份 `TriggerDeps` 传下来（`scripts` 就在里面）。
+ * 接入点就是本函数末尾返回的那个 `acts` 数组：把 `act.move` 与卡的 `play` 段一起放进去，
  * 顺序即执行顺序（`resolve/push.ts` 负责那次 LIFO 反转）。
  */
 function playCard(state: GameState, player: PlayerId, card: EntityData, slot: number): StepActs {
@@ -628,15 +661,22 @@ function concedeMatch(state: GameState, player: PlayerId): null {
  * **同一条理由在第 ① 步之后同样成立**（战斗开始的触发器就能打穿 base），
  * 那里有一道同形的判断，连同 `pendingInput` 一起 —— 见函数体里的 ★。
  *
- * ⚠ **假设（规范没说清，M5 需要复核）**：第 ⑤ 步里「剥附魔」与「发 `combat_ended`」
- *   的先后。v2 §4.2 把这一步写成 `combat_ended → end_of_combat 剥离 → round_end`，
- *   本函数实现的是**先剥再发**（与 {@link endRound} 对 `end_of_round` 的处理一致）。
- *   目前两种顺序**完全不可观测**：剥离不发事件，触发器又只入栈不结算，
- *   两者产出的事件流与状态逐字相同。M5 起会有一处差别 ——
- *   `queueTriggers` 里的 `cond` 求值会看到剥离前 / 剥离后两种不同的盘面
- *   （「每当战斗结束，若你有一个 atk ≥ 5 的单位…」算不算那条本轮 buff）。
- *   到那时要**同时**为 `end_of_combat` 与 `end_of_round` 定一个口径，
- *   而不是只改这一处；在此之前不擅自翻转，免得两个存续期的行为分叉。
+ * ✔ **M5/T3 拍板：一律「先剥离 + 重算，再发事件 / 排触发器」**（原为一处待复核的假设）。
+ *   v2 §4.2 把这一步写成 `combat_ended → end_of_combat 剥离 → round_end`，本函数实现的是
+ *   **先剥再发**。M5 之前两种顺序完全不可观测（剥离不发事件、触发器只入栈不结算）；
+ *   `resolve/auras.ts` 的两个 Σ 填上之后差别出现了 —— `queueTriggers` 里的 `cond` 求值
+ *   会看到剥离前 / 剥离后两种盘面（「每当战斗结束，若你有一个 atk ≥ 5 的单位…」
+ *   算不算那条本轮 buff）。取**剥离后**，三条理由：
+ *     a. `combat_ended` 说的是"战斗已经结束了"，那一刻本轮的临时增益按定义已经到期；
+ *     b. 相位机的三个落点（本处、{@link endRound}、{@link runStep}）口径一致 ——
+ *        这正是当初要求「同时为两者定一个口径」的原因；
+ *     c. 触发器一律在**结算后**的盘面上求值，与流水线第 ④ 步（`cond` 在 handler 改完
+ *        状态之后才求）同调。
+ *   ⚠ 第四个剥离点 —— `resolve/deaths.ts` 的 `while_source_alive` —— **不在**这条口径里：
+ *     它同样"先剥再重算"，但**排队时机**不同（规范把亡语写在光环重算之前），
+ *     于是本波亡语的 `cond` 看到的是中间盘面。为什么两边可以不同见那个文件的
+ *     `processDeaths`。本处这一条由 `resolve/__tests__/auras.test.ts` 的
+ *     「`end_of_combat` 剥离排在 `combat_ended` 的触发器排队之前」钉住。
  */
 export function runCombat(state: GameState, deps: ResolveDeps): GameEvent[] {
   const events: GameEvent[] = [];
@@ -644,7 +684,7 @@ export function runCombat(state: GameState, deps: ResolveDeps): GameEvent[] {
   // ① combat_began → 触发器排队 → 把结算栈跑到空（快照必须看见它们的效果）
   const opening = state.eventLog.length;
   emitEvent(state, { name: "combat_began", round: state.round });
-  queueTriggers(state, state.eventLog.slice(opening));
+  queueTriggers(state, state.eventLog.slice(opening), deps);
   for (const event of resolve(state, deps)) {
     events.push(event);
   }
@@ -674,9 +714,9 @@ export function runCombat(state: GameState, deps: ResolveDeps): GameEvent[] {
   //    事件排队之后就交出去：`combat_ended` 与它的触发器由 `advancePhases` 末尾那次
   //    `resolve()` 排空 / 弹栈，于是它排在本段全部事件之后 —— 顺序即因果。
   const closing = state.eventLog.length;
-  stripEnchantments(state, "end_of_combat");
+  stripEnchantments(state, "end_of_combat", deps);
   emitEvent(state, { name: "combat_ended", round: state.round });
-  queueTriggers(state, state.eventLog.slice(closing));
+  queueTriggers(state, state.eventLog.slice(closing), deps);
   state.phase = "round_end";
   return events;
 }
@@ -692,9 +732,11 @@ export function runCombat(state: GameState, deps: ResolveDeps): GameEvent[] {
  * v2 §4.1 的回合状态机里 `round_end` 到 `round_start` 是一条无条件边，
  * 没有任何一方需要在这里做决策。给它造一条意图只会多一次网络往返和一个
  * "谁来发"的扯皮点（引擎不认识网络，架构 §6.1）。
+ *
+ * `deps` 只有一个去处：转交给 {@link stripEnchantments}（剥完要重算光环）。
  */
-export function endRound(state: GameState): null {
-  stripEnchantments(state, "end_of_round");
+export function endRound(state: GameState, deps: TriggerDeps): null {
+  stripEnchantments(state, "end_of_round", deps);
   emitEvent(state, { name: "round_ended", round: state.round });
   state.phase = "round_start";
   return null;
@@ -712,13 +754,14 @@ export function endRound(state: GameState): null {
  * **不发事件**：v2 §5 没有"附魔到期"这个事件名，而 `silenced` 是 `act.silence`
  * 的专属语义（剥离全部附魔 + 复位 tag），借用它会让"沉默"的触发器误触发。
  *
- * ⚠ 现在剥离是**不可观测**的：`resolve/auras.ts` 的 `refreshAuras` 在 M5 之前还是
- *   `tags = base + 两个空 Σ`，附魔根本没被加进去。即便如此这段也不是空壳 ——
- *   存续期语义完整且正确，M5 把 Σ 填上之后它立刻生效，不需要回头改这里。
- *   （另一条存续期 `while_source_alive` 的剥离时机是"source 死亡时"，
- *   落点在死亡结算而不是相位机，同属 M5。）
+ * ✔ M5/T3 起剥离是**可观测**的：`resolve/auras.ts` 的两个 Σ 填上之后，`end_of_round`
+ *   与 `end_of_combat` 的加成会在这里真的掉下去。四种存续期的落点因此齐了 ——
+ *   `permanent` 只有 `act.silence` 能剥，另一条 `while_source_alive` 的时机是
+ *   "来源不在了"，落点在死亡结算（`resolve/deaths.ts`）而不是相位机。
+ *
+ * `deps` 只有一个去处：转交给 `refreshAuras`（光环与附魔的定义都在 bundle 里）。
  */
-export function stripEnchantments(state: GameState, duration: Duration): void {
+export function stripEnchantments(state: GameState, duration: Duration, deps: TriggerDeps): void {
   let changed = false;
   for (const key of Object.keys(state.entities)) {
     const entity = state.entities[Number(key)];
@@ -732,7 +775,7 @@ export function stripEnchantments(state: GameState, duration: Duration): void {
     }
   }
   if (changed) {
-    refreshAuras(state);
+    refreshAuras(state, deps);
   }
 }
 
@@ -800,8 +843,9 @@ function applyMulligan(
 export function runIntentBookkeeping(
   state: GameState,
   intent: Exclude<Intent, { t: "respond" }>,
+  deps: TriggerDeps,
 ): void {
-  runStep(state, () => bookkeepIntent(state, intent));
+  runStep(state, deps, () => bookkeepIntent(state, intent));
 }
 
 /** {@link runIntentBookkeeping} 的分发体：按意图类型改状态并交出要压栈的动作。 */

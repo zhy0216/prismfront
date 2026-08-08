@@ -29,6 +29,15 @@ risk: normal
 - [ ] 重连：`allowReconnection`（**它返回 Promise，忘了 catch 会静默吞掉判负逻辑**，
       框架 §13 坑 7），重连后补发全量快照。
 - [ ] 认输、超时判负、对局结果落库（走 `onDispose` 或独立队列，别阻塞房间销毁）。
+- [ ] **`ResolutionLoopError` 撞上时那一局怎么办**（M5/T4 留下的残余风险，需要在这里拍板）。
+      `apply()` 先 clone 再跑，抛错时**入参状态一字未改**，所以房间**不必**从快照恢复，
+      丢掉这一次意图即可 —— 房间不会卡死（框架 §13 坑 5 那条已消除）。
+      **但**：环发生在**自动相位**（双 pass → combat 那一段）里时，那一局会卡在
+      "这条意图提交不下去"上 —— 房间活着，那局推不动，玩家再点多少次都是同一个错。
+      要定的是：判负 / 作废 / 还是标记为引擎故障并人工介入。
+      判据参考：这不是玩家的错（是卡牌数据或引擎的 bug），判负对被卡的一方不公平。
+      详见 `packages/engine/src/resolve/resolve.ts` 的 `ResolutionLoopError`
+      与 `resolve/__tests__/deathrattle-loop.test.ts`。
 - [ ] 服务端收到意图**重新完整校验**（M7 的 `legal` 字段不是权威）。
 - [ ] 玩家身份用**不透明 `playerId` 字符串**，不要假设「匿名 = 无 id」，
       也**不要把 Colyseus 的 `sessionId` 当玩家身份外泄到引擎层**——

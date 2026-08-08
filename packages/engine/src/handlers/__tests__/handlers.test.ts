@@ -130,7 +130,6 @@ test("★ 尚未实现的 op 是一条显式清单（实现掉一个却忘了摘
     "act.gain_crystal_cap",
     "act.give",
     "act.move_to",
-    "act.set_flag",
     "act.set_health",
     "act.shift",
     "act.shuffle",
@@ -138,7 +137,7 @@ test("★ 尚未实现的 op 是一条显式清单（实现掉一个却忘了摘
     "act.steal",
     "act.transform",
   ]);
-  expect(NOT_IMPLEMENTED_OPS).toHaveLength(14);
+  expect(NOT_IMPLEMENTED_OPS).toHaveLength(13);
 });
 
 test("占位 handler = 静默跳过：不抛错、不发事件、盘面一字未动", () => {
@@ -576,8 +575,11 @@ test("act.buff：挂附魔实例（ench / source / duration），加成本身留
   expect(getEntity(step.state, self)?.enchantments).toEqual([
     { ench: ENCH, source: self, duration: "permanent" },
   ]);
-  // M4 的 `refreshAuras` 还没有 Σ附魔，所以 atk 仍是卡面值 —— M5 补 Σ 时本文件不用改。
-  expect(getEntity(step.state, self)?.tags.atk).toBe(2);
+  // ★ 本 handler 一个数值都没写：`base.atk` 仍是卡面值 2，而**生效值** `tags.atk`
+  //   是第 ⑥ 步 `refreshAuras` 从 `base + Σ附魔` 算出来的（M5/T3 起 Σ 是真的）。
+  //   两条一起断言才说明加成走的是重算而不是 handler 里的增量。
+  expect(getEntity(step.state, self)?.base.atk).toBe(2);
+  expect(getEntity(step.state, self)?.tags.atk).toBe(4);
 });
 
 test("act.buff：附魔表查不到 / 目标为空 ⇒ 静默跳过（不挂一条不知何时剥的附魔）", () => {
@@ -588,6 +590,49 @@ test("act.buff：附魔表查不到 / 目标为空 ⇒ 静默跳过（不挂一�
   expect(
     run(state, { op: "act.buff", target: ENEMY_BOARD, ench: ENCH }, self, BUNDLE_DEPS).events,
   ).toEqual([]);
+});
+
+test("act.set_flag：写 baseFlags（扛得住第 ⑥ 步重算），且一个事件都不发（M5/T2）", () => {
+  const { state, self } = opened();
+
+  const set = run(
+    state,
+    { op: "act.set_flag", target: SELF, flag: "divine_shield", value: true },
+    self,
+  );
+
+  // ★ 写 `baseFlags` 而不是只写派生的 `flags`：只写 `flags` 的实现，
+  //   本步末尾的 `refreshAuras` 就会把它从 `baseFlags` 重算掉 ⇒ 这两行同时读到 0/false。
+  expect(getEntity(set.state, self)?.baseFlags).not.toBe(0);
+  expect(getEntity(set.state, self)?.flags).not.toBe(0);
+  // v2 §5 没有"标志位变化"这个事件名，借 `buffed` 会让触发器为一次不存在的加成而触发。
+  expect(set.events).toEqual([]);
+
+  // 清回去（圣盾的 `then` 走的就是这条路径）。
+  const clear = run(
+    set.state,
+    { op: "act.set_flag", target: SELF, flag: "divine_shield", value: false },
+    self,
+  );
+  expect(getEntity(clear.state, self)?.baseFlags).toBe(0);
+  expect(getEntity(clear.state, self)?.flags).toBe(0);
+});
+
+test("act.set_flag：目标为空 ⇒ 整个动作跳过；值没变 ⇒ 不写", () => {
+  const { state, self } = opened();
+
+  // 空集合语义（IR v1 §5.2）：战线上没有敌人 ⇒ 什么都不做。
+  expect(
+    run(state, { op: "act.set_flag", target: ENEMY_BOARD, flag: "stunned", value: true }, self)
+      .events,
+  ).toEqual([]);
+  // 本来就是 false，再置一次 false ⇒ 盘面一字未动（`baseFlags` 仍是 0）。
+  const noop = run(
+    state,
+    { op: "act.set_flag", target: SELF, flag: "stunned", value: false },
+    self,
+  );
+  expect(getEntity(noop.state, self)?.baseFlags).toBe(0);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

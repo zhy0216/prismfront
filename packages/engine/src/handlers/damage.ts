@@ -1,7 +1,9 @@
 // 伤害与治疗、出手、直接消灭：`act.hit` / `act.heal` / `act.strike` / `act.destroy`。
-// 来源：v2 §3.4（`act.strike`：立即出手一次，`amount` = attacker **当前** atk，
-//       **内部走 `act.hit` 管线**，并发 `struck`）、IR v1 §3.4（`act.hit` / `act.heal` /
-//       `act.destroy`）、v2 §5（`struck` / `damaged` / `healed` 的负载）、
+// 来源：v2 §3.4（`act.strike`：立即出手一次，`amount` 缺省 = attacker **当前** atk，
+//       **内部走 `act.hit` 管线**，并发 `struck`；带上 `amount` 时用它 —— 那是 IR §5.6
+//       的运行时超集字段，战斗第 ② 步的冻结值，见 {@link strikeHandler}）、
+//       IR v1 §3.4（`act.hit` / `act.heal` / `act.destroy`）、
+//       v2 §5（`struck` / `damaged` / `healed` 的负载）、
 //       `state/entity.ts`（血量记账）、IR v1 §5.3 规则 1（动作内快照）。
 //
 // ═══════════════════════════════════════════════════════════════════════════
@@ -98,15 +100,41 @@ export const healHandler: ActHandler<"act.heal"> = (env, act) => {
  * - v2 §3.4 规定 strike **内部走 `act.hit` 管线**，目的是让拦截器（圣盾、减伤、
  *   "改为受到 1 点伤害"）在 `act.hit` 这一层就能拦到；就地调用会绕过流水线第 ② 步，
  *   M5 接上拦截器时圣盾会挡不住出手。
- * - 框架 §4.1 时序规则 2：连锁一律入栈。压栈之后 `damaged` 落在**下一次弹栈**，
- *   于是 `struck` 的触发器与 `damaged` 的触发器排队顺序天然正确。
+ * - 框架 §4.1 时序规则 2：连锁一律入栈。
+ *
+ * ── ⚠ 压栈带来的**真实**事件顺序（别按直觉猜）────────────────────────────
+ * `damaged` **不在本 handler 里发**：它要等压进去的那条 `act.hit` 被弹出来、跑完
+ * 自己那一遍流水线才发。于是 `struck` 与 `damaged` 分属**两次**弹栈、进的是**两批**
+ * 触发器排队，而两批之间谁先跑**由调用方的入栈时机决定**，本 handler 决定不了：
+ * - `resolve()` 逐条弹栈、每批当场入栈（`resolve/triggers.ts` 的 `queueTriggers`）⇒
+ *   第 ④ 步压的触发器盖在第 ③ 步压的那条 `act.hit` **之上**，于是它先跑。
+ *   事件流是 `struck` →（`struck` 的触发器产的事件）→ `damaged` →（`damaged` 的触发器）：
+ *   出手的触发器跑在**这一击自己的伤害之前**。
+ * - 战斗第 ③ 步（`rules/combat.ts` 的 `applyStrikes`）把 `act.hit` 收进本地链条、
+ *   整批只入栈一次 ⇒ 两批按事件发出序排，`struck` 的触发器在 `damaged` 的之前，
+ *   而伤害在两批触发器之前就落地了。
+ * 所以这里**不**声称"排队顺序天然正确" —— 那是一条测不到的断言（reviewer 实测：
+ * 修复之前战斗里同一击的 `damaged` 触发器反而先于 `struck` 触发器跑）。
  *
  * `attacker` 与 `target` 都要求**恰好一个实体**（"立即出手一次"，v2 §3.4）：
  * 非单实体一律静默跳过，判据与 `act.swap` 的"须各为单个在场单位"是同一条
  * （见 `targets.ts` 的 `singleTarget`）。
  *
- * `amount` 与 `target` 在这里就**冻结**成字面量与 `sel.entity`（IR v1 §5.6 运行时超集）：
- * 出手数值取的是**此刻**的 atk（v2 §3.4 / §4.2「快照后数值冻结」），
+ * ── ★ `amount` 从哪来：**动作上带了就用它**，否则读 attacker 当前 atk ★ ─────
+ * `act.strike.amount` 是 IR §5.6 的**运行时超集**字段（`ir/src/types/act.ts`，
+ * irVersion 2.3.0 加的），编写层写不出来 —— 唯一的填写方是战斗第 ② 步的快照
+ * （`rules/combat.ts` 的 `strikeActOf`），填的就是 v2 §4.2「记录后全部冻结」的那个数。
+ * 缺省分支（卡牌效果驱动的 `Strike(a, t)`）保持 v2 §3.4 原文的「attacker **当前** atk」。
+ *
+ * 这一行是「冻结值真的走完管线」的**唯一**落点：改回无条件 `attacker.tags.atk`，
+ * 批次中途被拦截器 `then` 或光环重算改掉的 atk 就会重新泄漏进伤害数字
+ * （M5/T5 之前正是如此，那时靠一道运行时哨兵当场抛错止损）。
+ *
+ * 求值顺序仍是签名序（IR v1 §5.4 规则 1）：attacker → target → amount。
+ * 前两者取不到单实体就直接返回，**`amount` 连求都不求** —— 与 {@link hitHandler}
+ * 「打空气不平白推进一次 RNG」是同一条（战斗填的是字面量，但卡面将来若填节点就有分别）。
+ *
+ * 之后 `amount` 与 `target` 在压栈时**冻结**成字面量与 `sel.entity`（同样是运行时超集）：
  * 压栈之后 attacker 掉 buff 或死亡都不该改变这一击。
  *
  * `atk <= 0` 这里**不特判**：v2 §4.2 的「`atk <= 0` → 不出手」是**战斗快照**的条件
@@ -119,7 +147,7 @@ export const strikeHandler: ActHandler<"act.strike"> = (env, act) => {
   if (attacker === undefined || target === undefined) {
     return;
   }
-  const amount = attacker.tags.atk;
+  const amount = act.amount === undefined ? attacker.tags.atk : evalNum(env, act.amount);
   emitEvent(env.state, { name: "struck", source: attacker.id, target: target.id, amount });
   pushAct(
     env.state,

@@ -39,7 +39,7 @@
 //    「动作内快照」。落地在 `handlers/targets.ts`，handler 一律经它取目标，
 //    不许在循环体里再求一次 —— 那正是规则 1 想禁掉的写法。
 
-import type { Act, ActNode, ActOp } from "@prismfront/ir";
+import type { Act, ActNode, ActOp, CardId, CardScript } from "@prismfront/ir";
 import type { CardLookup, EnchantLookup, EvalEnv } from "../eval/index.ts";
 import { createEvalEnv } from "../eval/index.ts";
 import type { CtxBindings, GameState, PendingAction } from "../state/index.ts";
@@ -97,20 +97,64 @@ export type HandlerTable = {
  */
 export type ScriptExpander = (state: GameState, ref: string, ctx: CtxBindings) => Act | null;
 
-/** `resolve()` / `resume()` 的外部接线。 */
-export interface ResolveDeps {
-  /** 动作执行表。见文件头的 handler 契约。 */
-  readonly handlers: HandlerTable;
-  /**
-   * 脚本引用展开器。缺省 ⇒ 栈里的 `via: "ref"` 条目一律静默跳过。
-   * 引擎自造的动作全是 `via: "inline"` 条目，所以缺省是安全的。
-   */
-  readonly expandScript?: ScriptExpander;
+/**
+ * 卡牌**脚本**查询：`cardId` → `CardScript`（IR v1 §2.2 的 `card.script`）。查不到给 `undefined`。
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ★ M5 的注入口：为什么是**并列的第三张表**，而不是把 `CardLookup` 放宽成整张 `Card` ★
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 触发器 / 拦截器 / 光环全部写在 `card.script` 里，而引擎此前**拿不到它**：
+ * `eval/context.ts` 的 {@link CardLookup} 只返回 `CardData`（卡面），
+ * {@link ScriptExpander} 又是按 ref 取**单个动作节点**的，没有"枚举订阅"的能力。
+ * 两条补法都能跑通，这里选了后者，理由是**架构 §5.2 的隐藏信息边界**：
+ *
+ *   - 放宽 `CardLookup → Card`：一次改动让**每个 handler / 求值器**（它们都拿着
+ *     `EvalEnv`）顺手就能读到 `card.script`。边界从"类型上不可能"退化成"约定上别读"，
+ *     而 §5.2 那条线（`cards.client.json` **绝不含 `script`**）是靠"客户端那份产物里
+ *     根本没有这个字段"结构性成立的 —— 引擎侧也该保持同一形状：**谁需要脚本，谁显式接线**。
+ *   - 并列一张 `ScriptLookup`：`data` 与 `script` 在注入口上就是两条独立的线
+ *     （IR v1 原则 6「数据与逻辑在文档层面就分开」的运行时镜像）。
+ *     只投影展示字段的那一方（客户端 / M7 的投影层）能提供 `cards` 却**提供不出**
+ *     `scripts` —— 它手里那份产物压根没有脚本，于是"客户端拿到卡牌逻辑"在接线层面
+ *     就是一件做不到的事，而不是一条要靠 code review 守住的纪律。
+ *
+ * 形状照抄 {@link CardLookup} / `EnchantLookup`：一个函数、缺省即退化、由调用方接线，
+ * 绝不做模块级注册表（框架 §3.2 引擎是纯函数）。
+ *
+ * ⚠ **附魔自带的触发器不走这里** —— 它在 `Enchantment.script.triggers`（IR v1 §2.3），
+ *   由已有的 `enchantments` 注入口提供，不需要第四张表。
+ */
+export type ScriptLookup = (cardId: CardId) => CardScript | undefined;
+
+/**
+ * 一张空脚本表：什么都查不到。
+ *
+ * 与 `eval/context.ts` 的 `NO_CARDS` 同一条语义 —— 不是「出错」而是
+ * 「引擎不认识任何卡牌逻辑」：没有任何实体订阅事件 ⇒ 触发器匹配结果恒为空集。
+ * M2~M4 的流水线与测试跑的正是这个退化形态。
+ */
+export const NO_SCRIPTS: ScriptLookup = () => undefined;
+
+/**
+ * **bundle 侧的只读查询**：匹配触发器（第 ④ 步）与拦截器（第 ② 步）所需的全部外部数据。
+ *
+ * 单独拎成一个接口（而不是直接用 {@link ResolveDeps}），是为了让第 ④ 步的两个调用方
+ * ——`processDeaths`（`deaths.ts`）与相位机（`rules/phase.ts`）—— 在签名上只声明
+ * 自己真正需要的东西：它们既不执行动作也不展开 ref，要一张 `handlers` 表纯属噪声。
+ * {@link ResolveDeps} 继承它，所以任何拿着完整 `deps` 的地方**原样传下去**即可。
+ *
+ * ⚠ 名字里的 "Trigger" 是历史（M5/T1 先落地）：M5/T2 起 `resolve/interceptors.ts` 的
+ *   `applyInterceptors` 收的也是它 —— 拦截器与触发器要的外部数据**逐字段相同**
+ *   （卡面 + 脚本 + 附魔），没有理由再开一个形状一样的接口。改名会波及四个调用点，
+ *   收益只有名字更贴切，所以留着这条注释而不是动名字。
+ */
+export interface TriggerDeps {
   /**
    * 卡面数据查询（`eval/context.ts` 的 `CardLookup`）。缺省 ⇒ `NO_CARDS`。
    *
-   * 两处要用它：`cond.is_kind` / `cond.has_color` / `cond.has_tribe` 读**卡面**
-   * 而不是实体 tag；`act.summon` 要按卡面属性新建实体（没有卡面就造不出单位）。
+   * 三处要用它：`cond.is_kind` / `cond.has_color` / `cond.has_tribe` 读**卡面**
+   * 而不是实体 tag（触发器的 `cond` 里就会出现，例如 Siege 的 `IsMinion`）；
+   * `act.summon` 要按卡面属性新建实体（没有卡面就造不出单位）。
    * 它跟 `handlers` / `expandScript` 一样是**注入**而不是模块级注册表 ——
    * 理由见本文件头（框架 §3.2 引擎是纯函数）。
    *
@@ -118,12 +162,32 @@ export interface ResolveDeps {
    */
   readonly cards?: CardLookup;
   /**
+   * 卡牌脚本查询（见 {@link ScriptLookup}）。缺省 ⇒ {@link NO_SCRIPTS}。
+   *
+   * 触发器 / 拦截器 / 光环的**唯一来源**。缺省 ⇒ 没有任何实体订阅事件、
+   * 也没有任何实体提供替换效果：第 ④ 步恒排 0 条、第 ② 步恒把动作原样返回
+   * （M2~M4 的形态，与接了卡表但卡上没写这些字段时逐字相同）。
+   */
+  readonly scripts?: ScriptLookup;
+  /**
    * 附魔定义查询（`eval/context.ts` 的 `EnchantLookup`）。缺省 ⇒ `NO_ENCHANTMENTS`。
    *
-   * 只有 `act.buff` 用：`AttachedEnchantment` 要记 `duration`（IR v1 §2.3），
-   * 而那写在 bundle 的附魔定义里。缺省 ⇒ `act.buff` 静默跳过。
+   * 两处用：`act.buff` 要记 `duration`（IR v1 §2.3，写在 bundle 的附魔定义里）；
+   * 触发器匹配要读 `Enchantment.script.triggers` —— 附魔自带的触发器是**第二个订阅来源**
+   * （IR v1 §2.3「附魔本身可以带触发器」）。缺省 ⇒ 两件事都静默跳过。
    */
   readonly enchantments?: EnchantLookup;
+}
+
+/** `resolve()` / `resume()` 的外部接线。 */
+export interface ResolveDeps extends TriggerDeps {
+  /** 动作执行表。见文件头的 handler 契约。 */
+  readonly handlers: HandlerTable;
+  /**
+   * 脚本引用展开器。缺省 ⇒ 栈里的 `via: "ref"` 条目一律静默跳过。
+   * 引擎自造的动作全是 `via: "inline"` 条目，所以缺省是安全的。
+   */
+  readonly expandScript?: ScriptExpander;
 }
 
 /**

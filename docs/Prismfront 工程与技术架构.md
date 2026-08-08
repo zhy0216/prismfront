@@ -460,8 +460,9 @@ TS 7 的全量检查已经足够快，`references` 的增量收益不抵配置�
 ### 5.1 `cards.ir.json` —— 引擎的输入
 
 《IR 规范》§2.1 的 bundle。要点原样保留：`irVersion`（**基线** `2.1.0`；
-M4 按决策 #9 新增 `cond.has_color`，IR §8「新增 op = minor」⇒ 当前产物是 `2.2.0`，
-权威出处是 `packages/ir/src/types/ir-version.ts` 的 `IR_VERSION`，此处不再复述数字）、
+此后两次 minor bump——M4 按决策 #9 新增 `cond.has_color`，M5 给 `act.strike` 加
+运行时超集字段 `amount`（编写子集不开放，构建产物里永不出现，所以既有 bundle 一字未变）——
+权威出处是 `packages/ir/src/types/ir-version.ts` 的 `IR_VERSION`，此处不复述数字）、
 `bundleId`、`opsUsed`。**每场对局开始时钉住 bundleId 并写进回放**，
 平衡性补丁不会让历史回放失真。
 

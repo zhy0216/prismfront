@@ -97,11 +97,31 @@ export type Act =
   /** 换位。`a`、`b` 须各为单个在场单位，否则跳过。 */
   | { op: "act.swap"; a: Sel; b: Sel }
   /**
-   * 立即出手一次：`amount` = attacker **当前** atk。
+   * 立即出手一次：`amount` 缺省 = attacker **当前** atk（v2 §3.4）。
    * 内部走 `act.hit` 管线（拦截器因此两处都能拦），并发 `struck` 事件。
    * 绿色的解牌"决斗"就是它（《数值基准》§1.2）。
+   *
+   * ★ `amount` 是**运行时超集**字段（IR v1 §5.6），编写子集不开放 ★
+   * 它的唯一来源是战斗第 ② 步的快照（v2 §4.2「记录 {attacker, target, amount}，
+   * 记录后列表与数值全部冻结」）：引擎把冻结下来的那个数写进这个字段，
+   * 于是「批次中途 atk 变了」不再影响已经冻结的出手 —— 冻结值是随动作一起
+   * 走完管线的，而不是在应用那一刻重新读一次 `attacker.tags.atk`。
+   *
+   * 编写层**没有**写它的路径（`builder/act.ts` 的 `Strike` 只收两个参数），
+   * 与 `sel.entity` 是同一条边界：运行时超集只由引擎自己生成，永不来自外部输入
+   * （IR v1 §5.6 末句，UGC 场景的安全边界）。L3 要把「bundle 里出现
+   * `act.strike.amount`」判成编写子集违规（M11，与禁 `sel.entity` 同一条）。
+   *
+   * ⚠ 缺省语义**一字未改**：没有这个字段的 `act.strike` 仍然是「attacker 当前 atk」，
+   *   所以既有 bundle 的含义与字节都没动 —— 版本按 minor 记，理由写在 `ir-version.ts`。
+   *
+   * ⚠ 副作用（有意接受）：`amount` 进了 {@link ACT_NUM_FIELDS} 的可读写面，于是
+   *   `num.field("amount")` / `set_field` / `mod_field` 拦 `act.strike` 对**战斗出手**
+   *   真的生效（减伤因此在 §3.4 说的"两处"都拦得住）；而卡牌驱动的
+   *   `Strike(a, t)` 没有这个字段，`set_field` 对它静默跳过（IR v1 §5.2）——
+   *   要拦那一条请拦它内部压出来的 `act.hit`。
    */
-  | { op: "act.strike"; attacker: Sel; target: Sel }
+  | { op: "act.strike"; attacker: Sel; target: Sel; amount?: Num }
 
   // ── 资源（DSL v2 §3.4 改名，v1 的 gain_mana / gain_max_mana 已删）──────────
   /** 本回合水晶。 */
@@ -165,7 +185,8 @@ export type ActEntityField = (typeof ACT_ENTITY_FIELDS)[number];
  * 与 `intercept.effect` 的 `set_field` / `mod_field`。
  *
  * 逐个来源：
- * `amount`（hit/heal/gain_armor/gain_crystal/gain_crystal_cap）、
+ * `amount`（hit/heal/gain_armor/gain_crystal/gain_crystal_cap，
+ * 外加 **strike 的运行时超集字段**，见 `act.strike` 的说明）、
  * `value`（set_health/set_tag）、`count`（draw/give/shuffle/summon）、
  * `pos`（move）、`delta`（mod_tag/shift）、`n`（repeat）、`show` `pick`（discover）。
  *

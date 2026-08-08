@@ -112,6 +112,7 @@ export function createInitialState(options: CreateInitialStateOptions): GameStat
       flags: NO_FLAGS,
       enchantments: [],
       damage: 0,
+      firedOnce: [],
       respawnAt: init.respawnAt ?? null,
     };
     entities[id] = entity;

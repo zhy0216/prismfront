@@ -28,10 +28,12 @@ import {
 } from "../index.ts";
 
 describe("架构 §10 规范一致性清理", () => {
-  test("第 1 项：irVersion 基线定为 2.1.0（v2 §0 的 2.0.0 作废），今天是 minor bump 后的 2.2.0", () => {
-    // 2.1.0 → 2.2.0：决策 #9 新增 `cond.has_color`。IR §8「新增 op = minor」，
-    // 既有 op 的语义与字段一个没改，所以 major 仍是 2（engine 的拒载判据不受影响）。
-    expect(IR_VERSION).toBe("2.2.0");
+  test("第 1 项：irVersion 基线定为 2.1.0（v2 §0 的 2.0.0 作废），今天是两次 minor bump 后的 2.3.0", () => {
+    // 2.1.0 → 2.2.0：决策 #9 新增 `cond.has_color`（IR §8「新增 op = minor」）。
+    // 2.2.0 → 2.3.0：M5/T5 给 `act.strike` 加运行时超集字段 `amount`
+    //   —— 既有 bundle 的字节与含义一字未变，缺省语义也没动，理由写在 ir-version.ts。
+    // 两次都没碰既有文档的读法，所以 major 恒为 2（engine 的拒载判据不受影响）。
+    expect(IR_VERSION).toBe("2.3.0");
     expect(IR_VERSION_MAJOR).toBe(2);
     expect(IR_VERSION.startsWith(`${IR_VERSION_MAJOR}.`)).toBe(true);
   });

@@ -115,6 +115,7 @@ function placeUnit(state: GameState, player: PlayerId, slot: number, init: UnitI
     flags: NO_FLAGS,
     enchantments: [],
     damage: 0,
+    firedOnce: [],
     respawnAt: null,
   };
   state.entities[id] = entity;
@@ -302,24 +303,38 @@ test("步数超过 MAX_RESOLUTION_DEPTH → ResolutionLoopError，抛错前已�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 三个 M5 挂钩点：恒等空实现（不是抛异常的占位符）
+// 三个 M5 挂钩点的**退化形态**：没有源时是恒等实现，不是抛异常的占位符
 // ═══════════════════════════════════════════════════════════════════════════
+// 触发那一条在 M5/T1 之后仍然成立（也仍然要测）：`deps` 不带 `scripts` 时排 0 条 ——
+// 这正是"这一局没接卡表"该有的行为。真匹配的测试见 `__tests__/triggers.test.ts`。
 
-test("拦截器：M2 恒等 —— 动作原样返回，永不 CANCELLED", () => {
+test("拦截器：无来源 —— 动作原样返回（引用相等），永不 CANCELLED", () => {
+  // `NO_DEPS` 不带 `scripts` ⇒ 收不到任何拦截器（`resolve/deps.ts` 的 `NO_SCRIPTS`）。
+  // 空链的结果本来就是恒等，所以这是**语义正确的退化形态**，不是占位实现 ——
+  // M2~M4 的走查跑的正是它。真匹配的测试在 `__tests__/interceptors.test.ts`。
   const state = freshState();
   const act = hitAct(3);
-  const result = applyInterceptors(state, createCtx(0), act);
+  const result = applyInterceptors(state, createCtx(0), act, NO_DEPS);
 
   expect(isCancelled(result)).toBe(false);
+  // ★ 引用相等而不只是深相等：没有候选时**一次求值、一次对象构造都不该发生**，
+  //   否则"盘面上有没有拦截器"会改变一条普通动作消耗的随机数。
   expect(result).toBe(act);
 });
 
-test("触发：M2 无订阅源 —— queueTriggers 一条都不入栈", () => {
+test("触发：无订阅源 —— queueTriggers 一条都不入栈", () => {
+  // `NO_DEPS` 不带 `scripts` ⇒ 没有任何实体订阅事件（`resolve/deps.ts` 的 `NO_SCRIPTS`）。
+  // 这是 M2~M4 的常态，也是 M5 之后"这一局没接卡表"时的退化形态 —— 语义正确，不是占位。
+  // 真匹配（`on`/`filter`/`cond`/`once`/`zone`）的测试在 `__tests__/triggers.test.ts`。
   const state = freshState();
-  const queued = queueTriggers(state, [
-    { name: "unit_died", target: 1, slot: 0 },
-    { name: "engine.random_picked", origin: "shuffle", max: 4, result: 2 },
-  ]);
+  const queued = queueTriggers(
+    state,
+    [
+      { name: "unit_died", target: 1, slot: 0 },
+      { name: "engine.random_picked", origin: "shuffle", max: 4, result: 2 },
+    ],
+    NO_DEPS,
+  );
 
   expect(queued).toBe(0);
   expect(state.stack).toHaveLength(0);
@@ -331,7 +346,9 @@ test("光环：重算而非增量 —— 写 tags 会被抹掉，写 base 才留
 
   unit.tags.atk = 99; // 写进派生值 = 写进一个下一步就被覆盖的缓存
   unit.base.atk = 5; // 写进 base 才是持久的
-  refreshAuras(state);
+  // `NO_DEPS` 不带 `scripts` / `enchantments` ⇒ 两个 Σ 都是空和（`resolve/auras.ts`）。
+  // 真 Σ（附魔 / 光环 / 四种存续期）的测试在 `__tests__/auras.test.ts`。
+  refreshAuras(state, NO_DEPS);
 
   expect(unit.tags.atk).toBe(5);
   expect(unit.tags.health).toBe(3);
@@ -346,7 +363,7 @@ test("光环重算覆盖全部实体（手牌里的牌也吃光环，例如费�
     return;
   }
   base0.tags.health = 1;
-  refreshAuras(state);
+  refreshAuras(state, NO_DEPS);
   expect(base0.tags.health).toBe(RULES.baseHp);
 });
 
@@ -450,13 +467,13 @@ test("规则 3：一波之内批量处理，处理完即到不动点", () => {
   first.damage = 1;
   second.damage = 1;
 
-  const report = processDeaths(state);
+  const report = processDeaths(state, NO_DEPS);
 
   // 两个一起死 = 一波，而不是一人一波（"批量"是同归于尽能成立的全部原因）。
   // 多于一波要等 M5 的亡语（亡语造成的新伤害才会引出第二波）。
   expect(report.waves).toBe(1);
   expect(report.died).toEqual([first.id, second.id]);
-  expect(processDeaths(state).waves).toBe(0);
+  expect(processDeaths(state, NO_DEPS).waves).toBe(0);
 });
 
 test("死亡的单位回**原主**的墓地（被偷走的单位不改变牌张归属）", () => {
@@ -465,7 +482,7 @@ test("死亡的单位回**原主**的墓地（被偷走的单位不改变牌张�
   const stolen = placeUnit(state, 1, 2, { health: 1, owner: 0 });
   stolen.damage = 1;
 
-  processDeaths(state);
+  processDeaths(state, NO_DEPS);
 
   expect(stolen.zone).toBe("p0:graveyard");
   expect(stolen.slot).toBeNull();
@@ -479,7 +496,7 @@ test("手牌/牌库里的实体不参与死亡判定（它们 health 为 0）", 
     rng: createRngState(1),
     decks: [["A", "B"], ["C"]],
   });
-  const report = processDeaths(state);
+  const report = processDeaths(state, NO_DEPS);
 
   expect(report.died).toEqual([]);
   expect(getZone(state, 0, "deck")).toHaveLength(2);
@@ -495,7 +512,7 @@ test("base 归零 → winner + phase over；base 不进墓地、不发 unit_died
   }
   base1.damage = RULES.baseHp;
 
-  const report = processDeaths(state);
+  const report = processDeaths(state, NO_DEPS);
 
   expect(state.winner).toBe(0);
   expect(state.phase).toBe("over");
@@ -512,7 +529,7 @@ test("双方 base 同时归零 → 平局", () => {
       base.damage = RULES.baseHp;
     }
   }
-  processDeaths(state);
+  processDeaths(state, NO_DEPS);
   expect(state.winner).toBe("draw");
   expect(state.phase).toBe("over");
 });

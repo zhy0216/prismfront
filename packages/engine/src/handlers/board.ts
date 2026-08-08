@@ -144,6 +144,7 @@ export function spawnOnSlot(
     flags: NO_FLAGS,
     enchantments: [],
     damage: 0,
+    firedOnce: [],
     respawnAt: null,
   };
   state.entities[id] = entity;

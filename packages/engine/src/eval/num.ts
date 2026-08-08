@@ -109,9 +109,11 @@ export function evalNum(env: EvalEnv, node: Num): number {
     case "num.field":
       // 只在 intercept 内部合法（IR v1 §5.1 / §4.2）：读**被拦截动作**的数值字段。
       // `CtxBindings` 不承载被拦动作（它不跨越挂起点，见 `state/stack.ts` 的说明），
-      // 所以 M5 要在 `EvalEnv` 上扩一个求值期字段。在此之前退化成 0 —— 用错上下文
-      // 是**校验期**错误（IR v1 §5.1），运行时不该为它设计语义。
-      return EMPTY_SET.attr;
+      // 所以载体是 `EvalEnv.field` 这个**求值期读取器**（M5/T2，见 `context.ts`）。
+      // 读取器负责惰性、记忆化与回写冻结；本分支只做一件事：有就读，没有就退化。
+      // `null` = 不在拦截器里 ⇒ 0，与空集合语义的数值位同调 —— 用错上下文是
+      // **校验期**错误（IR v1 §5.1），运行时不该为它设计第二种语义。
+      return env.field === null ? EMPTY_SET.attr : env.field(node.field);
     case "num.slot_index": {
       // ★★ 全 IR 唯一的例外返回值：不在场 / 非单实体 → `-1`（v2 §3.3）★★
       //    因为 0 是真实格子，回 0 会让「站在 0 号格」与「根本不在场」同义。

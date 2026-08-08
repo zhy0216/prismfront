@@ -564,12 +564,21 @@ export function canonicalizeAct(node: Act): Act {
       };
     case "act.swap":
       return { op: node.op, a: canonicalizeSel(node.a), b: canonicalizeSel(node.b) };
-    case "act.strike":
-      return {
+    case "act.strike": {
+      // `amount` 是运行时超集字段（IR §5.6），编写产物里不会有它 —— 但**若真喂进来**
+      // 就要原样带出去：本文件的规则 3「缺省不写」说的是「没写的可选字段不补」，
+      // 不是「写了的字段可以丢」。悄悄丢一个数值字段 = 冻结的出手数变回当前 atk，
+      // 而那正是 M5/T5 花一整条目消灭的那个失真。
+      const out: Extract<Act, { op: "act.strike" }> = {
         op: node.op,
         attacker: canonicalizeSel(node.attacker),
         target: canonicalizeSel(node.target),
       };
+      if (node.amount !== undefined) {
+        out.amount = canonicalizeNum(node.amount);
+      }
+      return out;
+    }
     case "act.gain_crystal":
     case "act.gain_crystal_cap":
       return {

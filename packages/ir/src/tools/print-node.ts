@@ -588,12 +588,17 @@ export function printAct(node: Act, ctx: PrintContext): string {
     }
     case "act.swap":
       return emitCall("Swap", [printSel(node.a, inner), printSel(node.b, inner)], ctx);
-    case "act.strike":
-      return emitCall(
-        "Strike",
-        [printSel(node.attacker, inner), printSel(node.target, inner)],
-        ctx,
-      );
+    case "act.strike": {
+      // 第三个参数是**运行时超集**字段（IR §5.6，战斗第 ② 步冻结的出手数值），
+      // 编写层的 `Strike` 只收两个参数 —— 与 `sel.entity` 打成 `Entity(id)` 是
+      // 同一条例外：打出来只为 dump 结算栈时可读，**不是可以贴回卡牌源码的写法**。
+      // 编写产物里不会出现它，所以 round-trip 语料照旧全部可贴回。
+      const args = [printSel(node.attacker, inner), printSel(node.target, inner)];
+      if (node.amount !== undefined) {
+        args.push(printNum(node.amount, inner));
+      }
+      return emitCall("Strike", args, ctx);
+    }
     case "act.gain_crystal":
       return emitCall(
         "GainCrystal",

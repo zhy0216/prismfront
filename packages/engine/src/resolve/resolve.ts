@@ -44,12 +44,18 @@
 //   **改动下面这六步的顺序或增删步骤，请同步改那里**，并读一遍那个文件头部
 //   「为什么选旁路管线而不是给 resolve() 加模式开关」的取舍。
 //
-// M2 的实现状态：**管线全通，②④⑥ 是恒等空实现，⑤ 是真实现**。
-//   ② 拦截器 → M5（`interceptors.ts`：无拦截器源 ⇒ 空链 ⇒ 动作原样返回）
-//   ④ 触发   → M5（`triggers.ts`：排序与入栈已做对并有测试，只差"事件→触发器"的匹配）
-//   ⑥ 光环   → M5（`auras.ts`：`tags = base + 两个空 Σ`）
-//   三处都是**语义正确的退化情形**，不是抛异常的占位符 —— 抛异常会让 M2 的走查跑不通，
-//   而走查（抽牌 → 放单位到格 → 手动 strike → 死亡）正是 M2 的完成标志。
+// 实现状态：**管线全通，②④⑤⑥ 全是真实现**。
+//   ② 拦截器 → **M5/T2 已落地**（`interceptors.ts`：`filter`/`cond`/四种 `effect`/
+//              `priority` 降序/8 层上限，按 IR v1 §4.2 匹配；来源同样经 `deps.scripts` 注入，
+//              **不接卡表时空链 ⇒ 动作原样返回**，与 M2~M4 逐字相同）
+//   ④ 触发   → **M5/T1 已落地**（`triggers.ts`：排序与入栈是 M2 做的，
+//              「事件 → 哪些触发器命中」由 `collectTriggerSubscriptions` 按 IR v1 §4.1 匹配；
+//              订阅源经 `deps.scripts` / `deps.enchantments` 注入，缺省即退化回排 0 条）
+//   ⑥ 光环   → **M5/T3 已落地**（`auras.ts`：两趟重算 `tags = base + Σ附魔 + Σ生效光环`；
+//              定义同样经 `deps.scripts` / `deps.enchantments` 注入，
+//              **不接卡表时两个 Σ 都是空和 ⇒ `tags = base`**，与 M2~M4 逐字相同）
+//   三处的"不接卡表"都是**语义正确的退化情形**，不是抛异常的占位符 —— 抛异常会让走查
+//   跑不通，而走查（抽牌 → 放单位到格 → 手动 strike → 死亡）正是 M2 的完成标志。
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // 两处相对框架 §4.1 代码的、有意的偏离
@@ -88,6 +94,14 @@ import { queueTriggers } from "./triggers.ts";
  * 计数器是 `resolve()` 的局部变量，所以**每次调用重新计数**：一次挂起
  * （`pendingInput`）之后 `resume()` 会拿到全新的 256 步预算。这是有意的 ——
  * 玩家做了一次选择就是一次新的因果起点，不该被上一段结算的步数拖累。
+ *
+ * ★ **这也是框架 §13 坑 5「亡语递归」的全部防线**（M5/T4 复核后拍板：**不另设**
+ *   亡语专用的深度上限）。亡语是普通触发器（`triggers.ts` 的 `deathrattleTriggerOf`），
+ *   只入栈不立即执行（时序规则 2），所以"亡语召唤的随从又有亡语"这条链**必然**
+ *   一步一次地经过上面那个 `while` —— 上限管的是「同一次结算弹了几次栈」，
+ *   而不是「亡语套了几层」，于是**合法的深链**（一条亡语召唤一个带亡语的随从，
+ *   乃至几十层的接力）不会被误伤。实测与专门测试见
+ *   `__tests__/deathrattle-loop.test.ts`，那里也写着"撞上限该抛错还是截断"的取舍。
  */
 export const MAX_RESOLUTION_DEPTH = 256;
 
@@ -99,8 +113,12 @@ export const MAX_RESOLUTION_DEPTH = 256;
  * **抛错路径也不例外** —— 否则这一批事件会滞留在状态里，下次结算重复下发。
  * 顺手把它们带出来，排"到底连锁到第几步炸的"时这是唯一有用的信息。
  *
- * 注意 `state` **不会**被回滚：引擎不做事务。调用方（M9 的 server 层）撞上它应当
- * 丢弃这份状态并从上一个快照恢复，而不是接着用。
+ * 注意 `state` **不会**被回滚：引擎不做事务，抛错时这份状态是半跑的（栈没空、
+ * 死亡已经落地），直接调 `resolve()` 的一方必须丢弃它，不能接着用。
+ *
+ * ⚠ 走 `apply()` 的一方（M9 的 server 层）**不需要回滚快照**：`apply()` 先 clone
+ *   再跑，半跑的是那份 draft，**入参状态一字未改** —— 丢掉这一次意图即可。
+ *   这条由 `__tests__/deathrattle-loop.test.ts` 的最后一条测试钉住。
  */
 export class ResolutionLoopError extends Error {
   /** 被突破的上限值。 */
@@ -163,8 +181,11 @@ export function resolve(state: GameState, deps: ResolveDeps): GameEvent[] {
     }
 
     // ② 替换效果：圣盾、免疫、"改为…"
-    const action = applyInterceptors(state, ctx, act);
+    //    `deps` 带着拦截器的来源（`deps.scripts`，M5/T2）一起进去，与第 ④ 步同一张表。
+    const action = applyInterceptors(state, ctx, act, deps);
     if (isCancelled(action)) {
+      // 被取消 ≠ 什么都没发生：拦截器的 `then` 已经**入栈**（IR v1 §4.2 + 时序规则 2），
+      // 下一次弹栈就轮到它 —— 所以这里只是跳过本步的第 ③~⑥ 步，不是丢掉这条链。
       continue;
     }
 
@@ -177,13 +198,15 @@ export function resolve(state: GameState, deps: ResolveDeps): GameEvent[] {
     const emitted = state.eventLog.slice(mark);
 
     // ④ 事后触发：按「当前回合玩家优先，再按 playOrder 升序」入栈（规则 1 + 规则 2）
-    queueTriggers(state, emitted);
+    //    `deps` 带着订阅源（`deps.scripts` / `deps.enchantments`，M5）一起进去。
+    queueTriggers(state, emitted, deps);
 
     // ⑤ 状态基础动作：死亡结算（规则 3；本步自己会把 `unit_died` 交给 ④ 排队）
-    processDeaths(state);
+    processDeaths(state, deps);
 
     // ⑥ 光环重算（规则 4）
-    refreshAuras(state);
+    //    `deps` 带着光环与附魔的定义（`deps.scripts` / `deps.enchantments`，M5/T3）一起进去。
+    refreshAuras(state, deps);
 
     // 需要玩家输入 → 挂起，等 resume()（框架 §4.2）
     if (state.pendingInput !== null) {

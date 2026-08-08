@@ -20,12 +20,14 @@
 //   sel.controller / sel.opponent                            → 由 self 的**当前控制者**推出
 //                                                              （见 {@link controllerOfSelf}）
 //   sel.entity                                               → 运行时超集，节点自带 id（§5.6）
-//   num.field                                                → 只在拦截器内合法，M5 扩展本环境
+//   num.field                                                → 只在拦截器内合法，M5/T2 补上
+//                                                              {@link EvalEnv.field}（读取器）
 //
 // 在错误的上下文里使用叶子是**校验期错误**而不是运行时错误（IR v1 §5.1），
 // 所以这里不为「绑定缺失」设计语义 —— 取不到就是空集，按 §5.2 静默退化。
 
 import type {
+  ActNumField,
   CardData,
   CardId,
   EnchantId,
@@ -91,18 +93,41 @@ export const NO_ENCHANTMENTS: EnchantLookup = () => undefined;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * `num.field(field)` 的读取器：取**被拦截动作**的某个数值字段（IR v1 §4.2 / §5.1）。
+ *
+ * ── 为什么是一个函数而不是把 `Act` 本身放进环境 ─────────────────────────────
+ * IR v1 §5.1 的 `Ctx.action?: ActNode` 看上去只要塞一个动作节点就够了。但被拦动作的
+ * 字段是 `Num`（可以是 `num.random`），**求值一次就推进一次 RNG**，而拦截器链里可能有
+ * 好几条 `cond` 都读同一个字段 —— 塞节点等于把"读几次就求值几次"写进类型。
+ * 换成读取器之后，"这个字段求值几次、结果冻在哪"由**产出读取器的那一方**（`resolve/
+ * interceptors.ts`）说了算：它做惰性 + 记忆化 + 回写冻结，与 `resolve/act-slots.ts`
+ * 给位置参数的处理是同一套。求值器这一侧因此只剩一行 `env.field(node.field)`。
+ *
+ * 语义：动作上**没有**这个数值字段（`act.hit` 没有 `count`，`act.set_flag.value`
+ * 是 boolean 不是 Num）时返回 `0` —— 与空集合语义的数值位同调（IR v1 §5.2），
+ * 用错上下文是**校验期**错误（§5.1），运行时不为它另设一种失败。
+ */
+export type ActNumFieldReader = (field: ActNumField) => number;
+
+/**
  * 一次求值的环境。
  *
- * 四个字段的分工：
+ * 五个字段的分工：
  * - `state`        —— 盘面 + **RNG**（`state.rng`）。求值器推进 RNG 只经 {@link rollInt}。
  * - `ctx`          —— IR v1 §5.1 的上下文绑定，纯数据，与栈条目里存的是同一个类型。
  * - `cards`        —— 卡面数据查询（见 {@link CardLookup}）。
  * - `enchantments` —— 附魔定义查询（见 {@link EnchantLookup}），动作层的 `act.buff` 用。
+ * - `field`        —— `num.field` 的读取器（见 {@link ActNumFieldReader}），
+ *                     **只有拦截器求值期非 `null`**；其余场合恒 `null`。
  *
- * 后两个是**bundle 侧的只读查询**，与 `state` / `ctx` 一样随求值一次性传入。
+ * 中间两个是**bundle 侧的只读查询**，与 `state` / `ctx` 一样随求值一次性传入。
  * E4 起本类型同时是 **handler 的入参**（`resolve/deps.ts` 的 `ActHandler`）：
  * 一个动作从「求目标」到「改状态」用的是**同一个环境**，于是不可能出现
  * 「派发层用了卡表 A、handler 自己又造了个卡表 B」这种两份真相。
+ *
+ * `field` 之所以在这里而不在 `CtxBindings` 里：`CtxBindings` 是**纯数据**、随栈条目落盘
+ * （框架 §4.2），而被拦动作只在拦截器求值那一瞬存在、且读取器是个闭包 ——
+ * 放进状态会当场破坏「结算中途可以整个落盘」这条前提（`state/stack.ts` 已点名说了这件事）。
  *
  * **不可变**：换 `it` 游标用 {@link withIt} 派生新环境，不原地改 ——
  * 与 `state/stack.ts` 的 `withCtx` 同一条理由（避免两处求值共享一个 ctx 对象串味）。
@@ -112,16 +137,23 @@ export interface EvalEnv {
   readonly ctx: CtxBindings;
   readonly cards: CardLookup;
   readonly enchantments: EnchantLookup;
+  readonly field: ActNumFieldReader | null;
 }
 
-/** 造一个求值环境。两张表的缺省见 {@link NO_CARDS} / {@link NO_ENCHANTMENTS}。 */
+/**
+ * 造一个求值环境。两张表的缺省见 {@link NO_CARDS} / {@link NO_ENCHANTMENTS}。
+ *
+ * `field` 缺省为 `null` = **不在拦截器里**：`num.field` 于是按 §5.2 退化成 0。
+ * 全引擎只有 `resolve/interceptors.ts` 会传非 `null` 的读取器。
+ */
 export function createEvalEnv(
   state: GameState,
   ctx: CtxBindings,
   cards: CardLookup = NO_CARDS,
   enchantments: EnchantLookup = NO_ENCHANTMENTS,
+  field: ActNumFieldReader | null = null,
 ): EvalEnv {
-  return { state, ctx, cards, enchantments };
+  return { state, ctx, cards, enchantments, field };
 }
 
 /**
@@ -130,6 +162,9 @@ export function createEvalEnv(
  * ⚠ `act.for_each` **不走这里**：它要把 `it` 绑进**压栈条目的 ctx**（纯数据，
  * 要跨越挂起点落盘），走的是 `state/stack.ts` 的 `withCtx`。本函数产出的是
  * 求值期的一次性载体，进不了状态。
+ *
+ * `field` 原样带下去：`sel.where` 的 `cond` 出现在拦截器的 `filter` / `cond` 里时，
+ * 里面照样可以读 `num.field`（IR v1 §5.1 只限定了"在 intercept 内"，没有限定嵌套深度）。
  */
 export function withIt(env: EvalEnv, it: EntityId): EvalEnv {
   return {
@@ -137,6 +172,7 @@ export function withIt(env: EvalEnv, it: EntityId): EvalEnv {
     ctx: withCtx(env.ctx, { it }),
     cards: env.cards,
     enchantments: env.enchantments,
+    field: env.field,
   };
 }
 

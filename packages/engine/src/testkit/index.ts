@@ -13,12 +13,16 @@
 //   建局    {@link openGame}（+ {@link makeTestDeck}）—— 一步停在 r1 的 `actions` 相位
 //   摆盘    {@link putUnit} / {@link setFace} / {@link setFlag} / {@link putInHand}
 //   推进    {@link passOnce} / {@link passThroughCombat} / {@link fightOnce} / {@link playCard}
-// 外加两条读盘的小工具（{@link damageOf} / {@link eventNames}）与一条绕开意图层的
-// 直驱结算管线（{@link runActs}）。
+// 外加几条读盘的小工具（{@link damageOf} / {@link tagOf} / {@link flagOf} /
+// {@link enchantsOf} / {@link eventNames}）与一条绕开意图层的直驱结算管线（{@link runActs}）。
 // 服务 `packages/cards` 单卡测试的三条（M4/E6 补入）：
 //   {@link cardFace}    卡表里的卡面 → 摆盘用的 `Face`（配 {@link putUnit} 摆净水随从）
 //   {@link castCard}    打出**卡表里的一张牌**，跑它的 `play` 脚本（可绑 `sel.target`）
 //   {@link respondNow}  回应挂起点（`act.select_target` 之后接着结算）
+// 服务触发器 / 拦截器 / 光环测试的三条（M5 补入，见本文件末尾那一节）：
+//   {@link scriptCard}  造一张只关心脚本的测试卡
+//   {@link cardDeps}    把若干张卡 / 附魔接成 `ResolveDeps`（cards + scripts + enchantments）
+//   {@link putCard}     摆一个**卡表里的**单位（关键是它的 `cardId` 指向那张卡）
 //
 // 使用方：`src/__tests__/`（走查与确定性）、M3 的四条战斗验收测试
 // （`rules/__tests__/combat.test.ts`）、以及 `packages/cards` 的单卡测试（M4 起）。
@@ -38,7 +42,19 @@
 // （`state/entity.ts` 的血量记账：当前血量 = `tags.health - damage`）。
 // 所以测试必须自己把卡面写进 `entity.base`。M4 接上卡表后本函数就没有存在的必要了。
 
-import type { Act, Card, CardId, EntityId, FlagName, RulesConfig, TagKey } from "@prismfront/ir";
+import type {
+  Act,
+  Card,
+  CardData,
+  CardId,
+  CardScript,
+  EnchantId,
+  Enchantment,
+  EntityId,
+  FlagName,
+  RulesConfig,
+  TagKey,
+} from "@prismfront/ir";
 import type { GameEvent } from "../events/index.ts";
 import { DEFAULT_DEPS, moveToZone, placeOnSlot } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
@@ -51,6 +67,7 @@ import {
   createCtx,
   getEntity,
   getZone,
+  hasFlag,
   maskWith,
   playerData,
   withCtx,
@@ -315,6 +332,54 @@ export function damageOf(state: GameState, id: EntityId): number {
 }
 
 /**
+ * 一个实体某个属性的**生效值**（`tags`，= `base + Σ附魔 + Σ生效光环`，时序规则 4）。
+ *
+ * 服务 M5/T3 的附魔 / 光环测试（`resolve/__tests__/auras.test.ts`）与将来
+ * `packages/cards` 里带光环的单卡测试：它们几乎每条断言都要读一次生效值，
+ * 而 `getEntity(...)?.tags.atk` 那串可选链会在每个测试文件里重复几十遍。
+ *
+ * ★ 读 `tags` 而不是 `base`：**卡面值扛不住任何加成**，断言 `base` 的测试对
+ *   「Σ 根本没加上去」这个 bug 完全没有判别力 —— 它本来就不该变。
+ *   要断言"handler 没去写卡面"，两个一起读（见 `handlers/__tests__/handlers.test.ts`
+ *   的 `act.buff` 那条）。
+ */
+export function tagOf(state: GameState, id: EntityId, tag: TagKey): number {
+  const entity = getEntity(state, id);
+  if (entity === undefined) {
+    throw new Error(`夹具错误：实体 ${id} 不存在`);
+  }
+  return entity.tags[tag];
+}
+
+/**
+ * 一个实体某个标志位的**生效值**（`flags`，附魔 / 光环授予的也算在内）。
+ *
+ * 与 {@link tagOf} 同一条理由与同一个陷阱：读 `flags` 不读 `baseFlags`。
+ * 用它断言"附魔授予的辉膜生效了"、"剥离之后没了"。
+ */
+export function flagOf(state: GameState, id: EntityId, flag: FlagName): boolean {
+  const entity = getEntity(state, id);
+  if (entity === undefined) {
+    throw new Error(`夹具错误：实体 ${id} 不存在`);
+  }
+  return hasFlag(entity, flag);
+}
+
+/**
+ * 一个实体身上还挂着的附魔 id 列表，按施加顺序（存续期剥离的可观测面之一）。
+ *
+ * 断言剥离要**同时**读它与 {@link tagOf}：只读实例列表，"剥了但忘了重算"照样绿；
+ * 只读生效值，"数值对了但实例还挂着"照样绿（下一次沉默/查询就会露馅）。
+ */
+export function enchantsOf(state: GameState, id: EntityId): EnchantId[] {
+  const entity = getEntity(state, id);
+  if (entity === undefined) {
+    throw new Error(`夹具错误：实体 ${id} 不存在`);
+  }
+  return entity.enchantments.map((attached) => attached.ench);
+}
+
+/**
  * 一个实体**当前站在哪一格**（不在场 ⇒ `null`）。
  *
  * 断言位置类效果（`act.swap` / `act.move_to` / `act.shift`）时该读它，**不要**只读事件流：
@@ -574,6 +639,127 @@ export function castCard(state: GameState, card: Card, options: CastOptions = {}
   const events = resolve(draft, options.deps ?? DEFAULT_DEPS);
   draft.seq += 1;
   return { state: draft, events };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 触发器 / 拦截器 / 光环驱动：把一张**带脚本**的卡接进引擎（M5）
+// ═══════════════════════════════════════════════════════════════════════════
+// M5 起引擎的订阅来源是 `ResolveDeps.scripts`（`resolve/deps.ts` 的 `ScriptLookup`）。
+// 一条触发器测试要同时办成两件事：
+//   1. 把这张卡的 `script` 接进 `deps` —— {@link cardDeps}
+//   2. 让某个**在场实体**的 `cardId` 指向这张卡 —— {@link putCard}
+// 两件事都办到了，`collectTriggerSubscriptions` 才扫得到它。少办一件的症状是
+// "触发器静默不响"，而那与"匹配写错了"在断言上长得一模一样 —— 所以收进夹具，
+// 让每个测试文件不必各写一遍这套接线。
+//
+// 使用方：`resolve/__tests__/triggers.test.ts`、`rules/__tests__/combat.test.ts`
+// 的亡语与触发器两条，以及将来 `packages/cards` 里带触发器的单卡测试。
+
+/** {@link scriptCard} 的可选卡面。省略即 1 费 1/1 的红色随从（数字由摆盘夹具再改）。 */
+export interface ScriptCardOptions {
+  readonly kind?: CardData["kind"];
+  readonly colors?: CardData["colors"];
+  readonly tags?: CardData["tags"];
+  readonly cost?: number;
+}
+
+/**
+ * 造一张**只关心脚本**的测试卡。
+ *
+ * 卡面填成一份最小合法值：单卡测试关心的是"这段脚本做了什么"，攻血由
+ * {@link putCard} / {@link setFace} 在摆盘时给（战斗测试要 9 血的靶子，触发器测试
+ * 要 1 血的炮灰，写死在卡面上反而每条测试都要绕开它）。
+ *
+ * ⚠ 它**不过 L1/L2/L3 校验**（那是 `packages/ir` 的事）：这里造的是一个类型合法的
+ *   `Card` 对象，用来喂引擎。真卡请写在 `packages/cards` 里并走 `defineCard`。
+ */
+export function scriptCard(id: CardId, script: CardScript, options: ScriptCardOptions = {}): Card {
+  const data: CardData = {
+    name: { zh: id },
+    kind: options.kind ?? "minion",
+    cost: options.cost ?? 1,
+    colors: options.colors ?? ["red"],
+    ...(options.tags === undefined ? {} : { tags: options.tags }),
+  };
+  return { id, set: "test", data, script };
+}
+
+/**
+ * 把若干张卡 / 附魔接成一份 {@link ResolveDeps}：`cards` + `scripts` + `enchantments` 三张表。
+ *
+ * 三张表都从**同一份**列表派生，所以不可能出现"卡面查得到、脚本查不到"这种
+ * 只在某一半上接线的半吊子状态（那正是最难排的一类夹具错误）。
+ * `handlers` 取 {@link DEFAULT_DEPS} 的那一张（30 个 op 齐全），要换桩的测试自己覆盖。
+ *
+ * 查不到的 id 一律 `undefined` —— 与生产的 `NO_CARDS` / `NO_SCRIPTS` / `NO_ENCHANTMENTS`
+ * 同一条退化语义（`resolve/deps.ts`），于是"没接进来的卡"表现为"引擎不认识它"，
+ * 而不是抛错。
+ */
+export function cardDeps(
+  cards: readonly Card[],
+  enchantments: readonly Enchantment[] = [],
+  handlers: ResolveDeps["handlers"] = DEFAULT_DEPS.handlers,
+): ResolveDeps {
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const enchById = new Map(enchantments.map((ench) => [ench.id, ench]));
+  return {
+    handlers,
+    cards: (cardId) => byId.get(cardId)?.data,
+    scripts: (cardId) => byId.get(cardId)?.script,
+    enchantments: (ench) => enchById.get(ench),
+  };
+}
+
+/**
+ * 摆一个**卡表里的单位**：与 {@link putUnit} 同一条路径，额外把实体的 `cardId`
+ * 改写成这张卡的 id。
+ *
+ * 改 `cardId` 是关键的那一步 —— 引擎按 `cardId` 去 `deps.scripts` 查脚本
+ * （框架 §3.1「行为不进状态，一律 `cardId` → 注册表」），不改就等于摆了一个
+ * 长得一样但**没有任何触发器**的单位。
+ *
+ * `face` 省略时取这张卡自己的卡面（{@link cardFace}）；战斗/触发器测试想要一个
+ * 特定攻血的靶子时显式传。
+ */
+export function putCard(
+  state: GameState,
+  player: PlayerId,
+  slot: number,
+  card: Card,
+  face: Face = cardFace(card),
+): EntityId {
+  const id = putUnit(state, player, slot, face);
+  retagAs(state, id, card);
+  return id;
+}
+
+/**
+ * 把**卡表里的一张牌**直接塞进某方手牌（不发事件、不消耗 RNG）。
+ *
+ * {@link putCard} 的手牌版，服务 `zone: "hand"` 的触发器（IR v1 §4.1：手牌触发写 `"hand"`）——
+ * 那类触发器只有在订阅者**待在手里**的时候才生效，所以测试必须能摆出"手里有这张牌"
+ * 这个盘面，而不是把它放到场上。
+ */
+export function putCardInHand(
+  state: GameState,
+  player: PlayerId,
+  card: Card,
+  face: Face = cardFace(card),
+): EntityId {
+  const id = deckTop(state, player);
+  setFace(state, id, face);
+  retagAs(state, id, card);
+  putInHand(state, player, id);
+  return id;
+}
+
+/** 把一个实体的身份改写成某张卡（`cardId` 是引擎查脚本的唯一钥匙，框架 §3.1）。 */
+function retagAs(state: GameState, id: EntityId, card: Card): void {
+  const entity = getEntity(state, id);
+  if (entity === undefined) {
+    throw new Error(`夹具错误：实体 ${id} 不存在`);
+  }
+  entity.cardId = card.id;
 }
 
 /**

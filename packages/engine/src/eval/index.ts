@@ -46,8 +46,9 @@
 // - 动作求值与 handler 表（`Record<Act["op"], Handler>`）→ E4 的 `handlers/`。
 //   IR v1 §5.3 的规则 1（动作内快照：`target` 求值一次、全程冻结）与规则 2
 //   （`act.repeat` 每轮重新求值）都落在那里，本目录只提供"求一次值"的能力。
-// - 触发器 / 拦截器 / 光环的求值接线 → M5。`num.field` 需要的"被拦动作"上下文
-//   要在那时扩到 `EvalEnv` 上（见 num.ts 的对应分支）。
+// - 触发器 / 拦截器 / 光环的求值接线 → M5。其中 `num.field` 需要的"被拦动作"上下文
+//   已由 M5/T2 扩到 `EvalEnv.field` 上（一个**读取器**而不是动作节点本身，
+//   理由见 `context.ts` 的 `ActNumFieldReader`）；接线方是 `resolve/interceptors.ts`。
 //
 // E4 补入的一支：`card.ts`（`CardRef` 求值）。`card.pool` 仍求不出来 ——
 // `filter` 里 `sel.it` 绑定的是**卡**而不是实体，与 `CtxBindings.it`（`EntityId`）
@@ -55,7 +56,7 @@
 
 export { evalCardRef } from "./card.ts";
 export { evalCond } from "./cond.ts";
-export type { CardLookup, EnchantLookup, EvalEnv } from "./context.ts";
+export type { ActNumFieldReader, CardLookup, EnchantLookup, EvalEnv } from "./context.ts";
 export {
   assertNever,
   cardDataOf,

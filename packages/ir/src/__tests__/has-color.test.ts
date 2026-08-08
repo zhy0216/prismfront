@@ -1,4 +1,4 @@
-// `cond.has_color` 的验收测试（决策 #9 / M4，irVersion 2.2.0 新增的唯一一个 op）。
+// `cond.has_color` 的验收测试（决策 #9 / M4，irVersion 2.2.0 那次 bump 新增的唯一一个 op）。
 //
 // 为什么单独一个文件：这个 op 横跨类型、op 全集、规范化、builder 糖、校验器、printer，
 // 分散到六份测试里就没人能一眼确认"这条待办真的落地了"。逐 op 的**覆盖完整性**
@@ -22,7 +22,7 @@ import {
   SELF,
 } from "../builder/index.ts";
 import type { Card, Color, Cond } from "../types/index.ts";
-import { COND_OPS, IR_VERSION } from "../types/index.ts";
+import { COND_OPS, IR_VERSION, IR_VERSION_MAJOR } from "../types/index.ts";
 import { ISSUE_CODES, validateCard, validateNode } from "../validate/index.ts";
 
 // ── 1. 语义规格（IR §3.3 全称量化 + 决策 #9 的存在量化）─────────────────────
@@ -167,7 +167,11 @@ describe("op 全集与版本", () => {
   });
 
   test("新增 op = minor bump（IR §8）：2.1.0 → 2.2.0，major 不变", () => {
-    expect(IR_VERSION).toBe("2.2.0");
+    // 本条钉的是「加这个 op **没有**动 major」——`cond.has_color` 之后又有过别的
+    // minor bump（M5/T5 的 `act.strike.amount`，2.3.0），所以这里不再钉具体的
+    // minor 位；当前值那一条在 `types/__tests__/types.test.ts` 里，只有一处。
+    expect(IR_VERSION_MAJOR).toBe(2);
+    expect(IR_VERSION.startsWith("2.")).toBe(true);
   });
 
   test("糖与节点一一对应：IsRed / IsBlue 不是结构改写型的糖", () => {

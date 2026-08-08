@@ -79,7 +79,11 @@ function isPlayerId(value: unknown): value is PlayerId {
  *             测试可以注入自己的表来隔离流水线。
  * @throws ResolutionLoopError 结算栈成环（框架 §4.1）。**不捕获**：那不是"非法意图"，
  *         而是卡牌数据或引擎自身的 bug，吞掉它只会让房间带着一份坏状态继续跑。
- *         协议层（M9）撞上它应当丢弃这份状态并从上一个快照恢复。
+ *         ★ 协议层（M9）**不需要从快照恢复**：本函数先 `cloneState` 再跑，半跑的是那份
+ *         draft，**入参 `state` 一字未改**（`__tests__/deathrattle-loop.test.ts` 钉住），
+ *         丢掉这一次意图即可。权威表述在 {@link ResolutionLoopError} 的文档注释。
+ *         ⚠ 残余风险：环发生在**自动相位**里时，那一局会卡在"这条意图提交不下去"上 ——
+ *         房间活着，但那局推不动。判负还是作废由 M9 定（`todos/M09-Colyseus服务端.md`）。
  */
 export function apply(
   state: GameState,
@@ -107,7 +111,7 @@ export function apply(
   }
 
   const draft = cloneState(state);
-  runIntentBookkeeping(draft, intent);
+  runIntentBookkeeping(draft, intent, deps);
   const events = resolve(draft, deps);
   for (const event of advancePhases(draft, deps)) {
     events.push(event);

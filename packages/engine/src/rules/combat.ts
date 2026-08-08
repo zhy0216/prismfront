@@ -30,13 +30,27 @@
 // ── 这两个「不」各自被哪条测试钉着（任务书原话：不能靠 fuzz 兜）───────────────
 //   第一个「不」（不做中途死亡结算）→ 「同归于尽」+「双亡平局」两条：它在 M3 的
 //     两处可观测面分别是**事件顺序**与**base 归零判负的时刻**。
-//   第二个「不」（触发器只入栈不结算）→ 「★ 触发器只入栈不结算」那一条。它必须经
-//     {@link TriggerQueue} 塞一个**会真排队**的源进来才测得到：M5 之前排队恒 0 条，
-//     把 {@link harvest} 挪到排队之后（= 批次中途就跑触发器）不改变任何可观测结果。
+//   第二个「不」（触发器只入栈不结算）→ 「★ 触发器只入栈不结算」那一条。
+//     ★ M3 时它需要一个 `TriggerQueue` 参数往第 ③ 步塞一个"会真排队"的桩源，因为那时
+//     `collectTriggerSubscriptions` 恒返回空、排队恒 0 条，把 {@link harvest} 挪到排队之后
+//     不改变任何可观测结果。**M5/T1 落地后那个参数已经退役**：测试改用一张真触发器卡
+//     （`on:"damaged"` + `act.draw`，经 `deps.scripts` 注入），断言一字未改。
+//     于是第 ③ 步的排队现在**只有一条路径**，不再有"生产走一条、测试走另一条"的分叉。
+//   ★ 第 ③ 步的**跨批次触发顺序**→ 三条，各钉一半，别混为一谈：
+//     a.「★ 跨批次的累积顺序」两条 —— 整批的累积序**没有被 LIFO 反转**（= 字典序的
+//        外层键：事件发出序）。⚠ 这两条的卡都带 `filter: {source: SELF}`，每批只有
+//        一个订阅者，**走不到**时序规则 1 的排序键（实测四种排序键注入 —— side 级反转、
+//        playOrder 级反转、`activePlayer` 翻面、`sortTriggers` 退化成恒等 —— 它们全绿）。
+//     b.「★ 时序规则 1：一击命中三个宿主」一条 —— 三个**不带 filter** 的宿主落在同一批，
+//        这才是排序键（内层键）在战斗路径上的防线。
+//     c.「★ 匹配不能推迟到批次末尾」一条 —— 逐击**匹配**读的是那一刻的盘面。
+//     三者与上面那个「不」是**不同的事**：那一条管的是触发器有没有在批次中途跑起来。
+//     a/c 由 {@link applyStrikes} 里相邻的两件事各自兑现（`harvest` 的位置 /
+//     入栈推迟到整批之后 / 匹配留在循环里），见那个函数的注释。
 //   第 ④ 步的「开闸」→ 「★ 第 ④ 步给结算栈开闸」那一条（往主栈上摆一条站位触发器，
 //     看它是不是**到第 ④ 步才**跑）。
-// 另有一道**运行时哨兵** {@link assertFrozenAmount} 守第 ② 步的「记录后全部冻结」——
-// 那一条在 M3 只有结构性论证，没有代码守着，理由与退役条件写在那个函数上。
+//   第 ② 步的「记录后全部冻结」→ 见 {@link PlannedStrike.amount}：M5/T5 起冻结值
+//     **随动作走完管线**（`act.strike.amount`），不再是一条只靠论证成立的等式。
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // ★ 设计选择：**旁路管线**，而不是给 `resolve()` 加「抑制死亡结算」的模式 ★
@@ -44,11 +58,13 @@
 // 两条路都能实现第 ③ 步，取舍如下。
 //
 // 【选中】旁路管线（本文件的 {@link applyStrikes}）：自己弹一条**本地链条**，
-//   逐条跑六步流水线，但跳过第 ⑤ 步，并且把 `queueTriggers` 压出来的东西**留在主栈上**。
+//   逐条跑六步流水线，但跳过第 ⑤ 步，并且把第 ④ 步排出来的触发器攒到整批结束
+//   才压上主栈（留给第 ④ 步开闸）。
 //   代价：六步的**顺序**在本仓出现了第二处实现（另一处是 `resolve/resolve.ts`）。
 //   缓解：本文件不自己实现任何一步，六步全部调 `resolve/` 导出的同名函数
-//   （`bindContext` / `applyInterceptors` / `runHandler` / `queueTriggers` /
-//   `processDeaths` / `refreshAuras`）。于是 M5 往那些函数里填真语义时，战斗自动跟上；
+//   （`bindContext` / `applyInterceptors` / `runHandler` / `collectOrderedTriggers` +
+//   `enqueueTriggers` / `processDeaths` / `refreshAuras`）。
+//   于是 M5 往那些函数里填真语义时，战斗自动跟上；
 //   真正可能分叉的只剩「步骤顺序」这一件事，而它在 `resolve.ts` 的文件头里被
 //   显式点名要求「改本文件前先读完四条时序规则」，那里也留了一行指回这里。
 //
@@ -69,11 +85,13 @@
 // 一条 `act.strike` 在流水线里会往栈上放两类完全不同的东西：
 //   1. **连锁**：handler 压的 `act.hit`（v2 §3.4：strike 内部走 hit 管线）、
 //      以及 M5 拦截器命中后压的 `then` —— 它们是「这一击还没做完」的部分，属于第 ③ 步；
-//   2. **触发器**：`queueTriggers` 压的条目 —— 它们是「这一击做完之后的反应」，属于第 ④ 步。
-// 两类东西都落在同一个 `state.stack` 上，靠位置分不开。但它们的**产生时刻**是分开的：
-// 连锁在 handler（第 ③ 步）里压，触发器在第 ④ 步压。于是只要在 handler 跑完、
-// `queueTriggers` 之前把「新长出来的那一截」整段摘走（{@link harvest}），
-// 分类就是精确的，不需要给栈条目加任何标记（那会污染 `PendingAction` 这个纯数据类型）。
+//   2. **触发器**：第 ④ 步排出来的条目 —— 它们是「这一击做完之后的反应」。
+// 两类东西本来会落在同一个 `state.stack` 上，靠位置分不开。但它们的**产生时刻**是分开的：
+// 连锁在 handler（第 ③ 步）里压，触发器在第 ④ 步产出。于是只要在 handler 跑完、
+// 第 ④ 步之前把「新长出来的那一截」整段摘走（{@link harvest}），分类就是精确的，
+// 不需要给栈条目加任何标记（那会污染 `PendingAction` 这个纯数据类型）。
+// 第 ④ 步本身则连主栈都不碰：它把有序条目攒进一个局部数组，整批结束才一次性入栈
+// （跨批次顺序的理由见 {@link applyStrikes}），于是这两类东西在批次期间根本不在同一个容器里。
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // ⚠ 战斗批次是**原子**的：第 ③ 步不检查 `pendingInput`
@@ -86,20 +104,43 @@
 // 也不假装支持。**M5 若要让拦截器能挂起，必须先回答「战斗批次跨挂起点如何续跑」**——
 // 那需要把剩余快照放进 `GameState`（于是它要被投影/回放/快照一路照顾到），
 // 是一次有成本的设计变更，不是在这里补一个 `if` 能糊过去的。
+//
+// ── M5/T2（拦截器落地）之后这条约束的状态：**仍然成立** ──────────────────────
+// 四种 `effect`（`cancel` / `set_field` / `mod_field` / `retarget`）都只改写动作节点，
+// 一个都不挂起；`then` 是**入栈**的，`applyInterceptors` 返回时还没执行
+// （在这里它被下面那次 `harvest` 收进本地链条，随后照常逐条跑六步）。
+// ⚠ 唯一能打破它的写法是**把会挂起的动作写进 `intercept.then`**
+//   （`act.select_target` / `act.discover`）：那样批次会带着一个已置位的 `pendingInput`
+//   继续跑完。在 L3 补上「`intercept.then` 不得含挂起点」之前，这是一条**写卡约束**，
+//   两处注释互相指认（另一处在 `resolve/interceptors.ts` 文件头的「边界」一节）。
+//
+// ── 顺带：拦截器**能**改批次中途的 atk，只是不经 `effect` 那条路 ────────────
+// 四种 `effect` 改的都是**动作**（`act.hit.amount` 之类），不碰攻击者的 `tags.atk`；
+// 但 `then` 是一串普通动作，`act.mod_tag(atk)` / `act.buff` 写进去就能改**尚未出手**
+// 那一方的 atk，而 `then` 正是在本文件的本地链条里跑的（见下面 `applyStrikes`）。
+// 光环那一支还要更隐蔽：`refreshAuras` 每一步都跑，一条 `cond` 依赖盘面的光环
+// （例如「我还活着时友军 +2 攻」，判据 `cond.dead` = 血量归零而**不问在不在场**）
+// 会在宿主中途被打成致死的那一刻整条失效 —— 一张动作都没执行，atk 就变了。
+// 两条路 M5 都实测踩到过，各有一条测试：光环那一支在 `__tests__/combat.test.ts`
+// （「★ 光环在批次中途失效」），拦截器那一支在 `resolve/__tests__/auras.test.ts`
+// （「★ 批次中途挂上加攻附魔」）。触发器那一支**踩不到**（第 ③ 步只入栈不结算）。
+// **这不再是故障**：M5/T5 起冻结值随 `act.strike.amount` 走完管线，
+// 批次中途的 atk 变化影响的是**下一轮**的快照，而不是这一轮已经冻结的出手。
 
 import type { Act, EntityId } from "@prismfront/ir";
 import type { GameEvent } from "../events/index.ts";
 import { drainEventLog } from "../events/index.ts";
-import type { ResolveDeps } from "../resolve/index.ts";
+import type { QueuedTrigger, ResolveDeps } from "../resolve/index.ts";
 import {
   actOfPending,
   applyInterceptors,
   bindContext,
+  collectOrderedTriggers,
+  enqueueTriggers,
   isCancelled,
   MAX_RESOLUTION_DEPTH,
   processDeaths,
   pushAct,
-  queueTriggers,
   ResolutionLoopError,
   refreshAuras,
   resolve,
@@ -141,26 +182,34 @@ export interface PlannedStrike {
   /**
    * 快照那一刻的**生效 atk**（v2 §4.2「记录后全部冻结」）。
    *
-   * ⚠ IR v1 的 `act.strike` 是 `{op, attacker, target}`，**没有 `amount` 字段**
-   *   （`ir/src/types/act.ts`），所以这个冻结值没法随动作一起压进栈 ——
-   *   真正打出去的数值由 `handlers/damage.ts` 的 `strikeHandler` 在应用那一刻
-   *   重新读 `attacker.tags.atk` 得到。两者在 M3 里**必然相等**，理由是结构性的：
-   *   第 ③ 步不结算死亡、不跑触发器，`refreshAuras` 又只是从没变过的 `base` 重算，
-   *   于是批次期间没有任何东西能改动 `tags.atk`。
-   *   M5 若引入「能在批次中途改 atk 的拦截器」，这条论证就断了，那时必须二选一：
-   *   给 IR 的 `act.strike` 加一个可选 `amount`（编写子集不开放，只进运行时超集），
-   *   或者让战斗自己发 `struck` + 压冻结的 `act.hit`（代价是与 `strikeHandler` 分叉）。
-   *   本字段先把「规范要求冻结」这件事记在类型里，并由 U2 的战斗测试直接断言。
+   * ★ 这个数**真的会被打出去**：{@link strikeActOf} 把它填进 `act.strike.amount`，
+   * `handlers/damage.ts` 的 `strikeHandler` 直接用（IR §5.6 的运行时超集字段，
+   * irVersion 2.3.0，M5/T5 加的）。所以「冻结」在本仓是一条**有落点的实现**，
+   * 不是一句注释里的承诺。
    *
-   *   ★ TODO(M5)：在那个二选一落地**之前**，这条不变量由 {@link assertFrozenAmount}
-   *   那道**运行时哨兵**守着（`applyStrikes` 里，应用每条快照之前跑一次）——
-   *   M3 里它恒真，M5 第一次引入「能在批次中途改 atk 的东西」时当场抛
-   *   {@link StrikeAmountDriftError}。
-   *   哨兵是**临时防线不是终局方案**：它只能让"冻结被破坏"这件事停下来，
-   *   不能让那一击真的按冻结值打出去。M5 必须回到上面那个二选一挑一条
-   *   （给 IR 的 `act.strike` 加可选 `amount` / 战斗自己发 `struck` + 压冻结的 `act.hit`），
-   *   把冻结值真的送进管线，**然后把哨兵连同它的错误类一起删掉**。
-   *   两处互相指认（那边也写着同一句），改一处请一起改。
+   * ── M3 → M5 这条路上发生了什么（别再走回去）─────────────────────────────
+   * M3 时 IR 的 `act.strike` 只有 `{op, attacker, target}`，冻结值没法随动作压进栈，
+   * 真打出去的数由 `strikeHandler` 在应用那一刻重读 `attacker.tags.atk`。
+   * 两者在 M3 **恒相等**，但那是一条**结构性论证**（第 ③ 步不结算死亡、不跑触发器，
+   * `refreshAuras` 又只从没变过的 `base` 重算），M3 为它留了一道运行时哨兵兜底。
+   * M5 把三分体系接上之后，论证的两个前提都塌了，**实测**两条路径都能在批次中途改 atk：
+   *   1. **拦截器的 `then`**（T2）—— `then` 入栈后被 `harvest` 收进本地链条，
+   *      在这一批出手里就跑；`act.mod_tag(atk)` / `act.buff` 写在那里即可；
+   *   2. **光环重算**（T3）—— 第 ⑥ 步逐击都跑 `refreshAuras`，一条 `cond` 依赖盘面的
+   *      光环（「我还活着时友军 +2 攻」，`cond.dead` 判的是血量归零、不问在不在场）
+   *      会在宿主被打成致死的那一刻整条失效。这一支**一个动作都没执行**。
+   * 触发器（T1）不在其中：第 ③ 步只匹配、只排序，入栈推迟到整批之后，
+   * 它改不了批次中途的盘面 —— 这一条**也实测过**（一张 `on:"struck"` 自加攻的卡跑完
+   * 整局，当时那道哨兵一次都没响）。它的效果落在第 ④ 步之后，于是被下一轮的快照读到，
+   * 由 `__tests__/combat.test.ts` 的「★ 冻结只冻这一轮」正面钉住。
+   *
+   * ── 为什么选「给 IR 加字段」而不是「战斗自己发 struck + 压冻结的 act.hit」──
+   * 后者会丢掉 `act.strike` 这一层拦截点（v2 §3.4 明写"拦截器两处都能拦"，圣盾 /
+   * 减伤 / "改为…"要能拦在那里），并与 `strikeHandler` 分叉出第二份出手实现。
+   * 前者在 M3 唯一的代价是「要 bump `irVersion`，而 M3 不碰 `packages/ir`」——
+   * 那是一条里程碑边界，M5 已经不受它约束（M4 加 `cond.has_color` 走的就是同一套动作）。
+   * 加的字段编写子集**不开放**（`builder` 的 `Strike` 恒两参、L3 待 M11 补禁令），
+   * 于是既有 bundle 一字未变，版本按 minor 记（论证在 `ir/src/types/ir-version.ts`）。
    */
   readonly amount: number;
 }
@@ -248,104 +297,27 @@ function combatTargetOf(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * 应用一条快照时，攻击者的**生效 atk 已经不等于快照冻结的那个数**（v2 §4.2 第 ② 步）。
+ * 一条快照对应的动作节点 —— 三个字段**全部冻结**（IR v1 §5.6 的运行时超集：引擎自造）。
  *
- * 形态与理念照抄 `resolve/resolve.ts` 的 `ResolutionLoopError`：
- * 它**不是「非法意图」**（那一类由 `apply()` 回 `ok:false` 的原因码），
- * 而是**引擎 / 卡牌数据的 bug**。吞掉它只会让房间带着一个坏状态继续跑 ——
- * 快照说这一击是 3、真打出去 9，两个数字都"看起来挺合理"，
- * 于是它会以「很久以后某局对战的伤害对不上」的形式才被发现。
+ * `attacker` / `target` 冻成 `sel.entity`，`amount` 冻成字面量。
+ * 这三行就是 v2 §4.2 第 ② 步「记录后列表与数值全部冻结」的**全部落点**：
+ * `handlers/damage.ts` 的 `strikeHandler` 拿到 `amount` 就直接用，不再回头读
+ * `attacker.tags.atk` —— 于是拦截器 `then` 改攻、光环中途失效都改不了这一击
+ * （两条路径与它们的历史见 {@link PlannedStrike.amount}）。
  *
- * 抛错前把事件日志排空并挂在 {@link events} 上：`events/log.ts` 定死了
- * 「`apply()` / `resume()` 返回时 `state.eventLog` 必为空」这条不变量，
- * **抛错路径也不例外**（同 `ResolutionLoopError`）。
- *
- * 注意 `state` **不会**被回滚：引擎不做事务。M9 的 server 撞上它应当丢弃这份状态
- * 并从上一个快照恢复，而不是接着用。
+ * ⚠ 删掉 `amount` 这一行**不会有任何类型错误**（IR 里它是可选字段，`tsc --noEmit`
+ *   实测通过），行为静默退回"应用那一刻重读 atk"。所以钉住它的只有测试 ——
+ *   实测删掉这一行**恰好红 4 条**：
+ *     `rules/__tests__/combat.test.ts`       「★ 批次中途改 atk」「★ 光环在批次中途失效」
+ *     `resolve/__tests__/auras.test.ts`      「★ 批次中途挂上加攻附魔」
+ *     `resolve/__tests__/interceptors.test.ts`「★ 拦 act.strike 的 amount」
  */
-export class StrikeAmountDriftError extends Error {
-  /** 那条快照的出手者。 */
-  readonly attacker: EntityId;
-  /** 第 ② 步冻结下来的数值。 */
-  readonly frozen: number;
-  /** 应用那一刻的生效 atk；`undefined` = 攻击者已经不在实体表里（同样是违约）。 */
-  readonly actual: number | undefined;
-  /** 抛错前排空的事件（见类说明）。 */
-  readonly events: readonly GameEvent[];
-
-  constructor(
-    attacker: EntityId,
-    frozen: number,
-    actual: number | undefined,
-    events: readonly GameEvent[],
-  ) {
-    super(
-      `快照冻结的出手数值在批次中途被改动：攻击者 ${attacker} 冻结 ${frozen}、` +
-        `应用时是 ${actual}（v2 §4.2 第 ② 步「记录后全部冻结」）`,
-    );
-    this.name = "StrikeAmountDriftError";
-    this.attacker = attacker;
-    this.frozen = frozen;
-    this.actual = actual;
-    this.events = events;
-  }
-}
-
-/**
- * ★ 运行时哨兵：应用一条快照**之前**，确认攻击者的生效 atk 仍等于冻结的那个数。
- *
- * ── 它守的是什么 ─────────────────────────────────────────────────────────
- * {@link PlannedStrike.amount} 讲了 M3 的现状：冻结值**没法**随 `act.strike` 一起压进栈
- * （IR v1 的 `act.strike` 没有 `amount` 字段），真正打出去的数由 `handlers/damage.ts`
- * 的 `strikeHandler` 在应用那一刻重读 `attacker.tags.atk`。两者在 M3 里必然相等，
- * 但那是一条**结构性论证**（第 ③ 步不结算死亡、不跑触发器，`refreshAuras` 又只从
- * 没变过的 `base` 重算），不是一行代码。论证没有防线：M5 往拦截器 / 触发器里填真语义的
- * 那一天，它会**静默**失效，而失效的表现只是"伤害数字变了一点"。
- *
- * ── 为什么是哨兵，而不是一条留红的测试 ────────────────────────────────────
- * 留红抓不到它要抓的事：实现今天就不冻结，所以 M5 破坏之前它红、之后**还是红** ——
- * 它唯一能产生的跃迁是 red→green，而不是"M5 破坏时大声红掉"。
- * 而代价是整套测试恒 exit 1（`.github/workflows/ci.yml` 的 `turbo test` 是必过步骤），
- * 从那个提交起没人能再拿"测试绿"当闸门：新引入的真回归只会表现为「还是红」。
- * 哨兵把两件事都反过来：
- *   - **M3 里它恒真** ⇒ 全套测试转绿，CI 的信号恢复；
- *   - **M5 一旦引入能在批次中途改 atk 的拦截器 / 触发器，第一次跑就当场抛** ⇒
- *     这才是被要求的"大声红掉"，而且它把「M5 弄坏了冻结」与「M3 的已知状态」分得开。
- *
- * ── 为什么不顺手把实现改对 ───────────────────────────────────────────────
- * 另外两条路现在付代价、却拿不到收益：给 IR 的 `act.strike` 加可选 `amount` 要 bump
- * `irVersion` 并牵动 M11 的色轮 lint（而 M3 不碰 `packages/ir`）；让战斗自己发 `struck`
- * + 压一条冻结的 `act.hit`，则丢掉 `act.strike` 这一层拦截点（M5 的圣盾 / 减伤 /
- * 「改为…」要能拦在那里，v2 §3.4），并与 `strikeHandler` 分叉出第二份出手实现。
- * 哨兵一行都不碰 IR，也不分叉。
- *
- * ── ⚠ 临时防线，不是终局方案 ─────────────────────────────────────────────
- * 它只能**让坏掉的批次停下来**，不能让那一击按冻结值打出去。M5 必须回到
- * {@link PlannedStrike.amount} 的 TODO(M5) 二选一里挑一条，把冻结值真的送进管线，
- * **然后把本函数与 {@link StrikeAmountDriftError} 一起删掉**。两处互相指认。
- *
- * 攻击者**取不到实体**（`undefined`）同样判违约：M3 里它不可能发生（第 ③ 步不结算死亡，
- * 而 `getEntity` 不管实体在哪个区），真发生了也说明有人在批次中途动了实体表 ——
- * 与 atk 被改是同一类故障，不值得为它分出第二个错误类。
- */
-function assertFrozenAmount(state: GameState, planned: PlannedStrike): void {
-  const actual = getEntity(state, planned.attacker)?.tags.atk;
-  if (actual !== planned.amount) {
-    throw new StrikeAmountDriftError(
-      planned.attacker,
-      planned.amount,
-      actual,
-      drainEventLog(state),
-    );
-  }
-}
-
-/** 一条快照对应的动作节点（IR v1 §5.6 的运行时超集：引擎自造，目标用 `sel.entity` 冻结）。 */
 function strikeActOf(planned: PlannedStrike): Act {
   return {
     op: "act.strike",
     attacker: { op: "sel.entity", id: planned.attacker },
     target: { op: "sel.entity", id: planned.target },
+    amount: planned.amount,
   };
 }
 
@@ -364,36 +336,13 @@ function strikeCtxOf(planned: PlannedStrike): CtxBindings {
  * 把主栈上 `floor` 之上**新长出来的那一截**整段摘到本地链条（保持栈序）。
  *
  * 见文件头「本地链条是怎么把连锁与触发器分开的」：摘的时机决定了分类，
- * 所以调用点只有两处，都紧贴在 handler 跑完之后、{@link TriggerQueue} 之前。
+ * 所以调用点只有两处，都紧贴在 handler（或被取消时的拦截器）跑完之后、第 ④ 步之前。
  */
 function harvest(state: GameState, floor: number, chain: PendingAction[]): void {
   for (const item of state.stack.splice(floor)) {
     chain.push(item);
   }
 }
-
-/**
- * 第 ③ 步「事件 → 触发器排队」的接线。生产恒为 `resolve/triggers.ts` 的 `queueTriggers`
- * （{@link resolveStrikes} 的默认值），签名与它逐字相同：返回入栈条目数。
- *
- * ── ★ 为什么它是一个参数 ★ ───────────────────────────────────────────────
- * 第 ③ 步的第二个「不」（**触发器只入栈不结算**）在 M3 是**不可观测**的：
- * `collectTriggerSubscriptions` 恒返回空（匹配是 M5），于是排队恒 0 条 ——
- * 把 {@link harvest} 挪到排队**之后**（等价于"批次中途就把触发器跑了"）会得到
- * 逐字相同的事件流与状态。一条只靠注释守着的时序规则，正是文件头说的
- * "最容易写错的地方"，而 M3 任务书对这两个「不」的要求是
- * **必须有独立测试、不能靠 fuzz 兜**。
- * 做成参数，测试就能塞一个**会真排队**的源进来，把「先摘连锁、后排触发器」这个顺序
- * 钉死（`rules/__tests__/combat.test.ts` 的「★ 触发器只入栈不结算」）。
- *
- * 这与 `resolve/deps.ts` 把 handler 表做成注入是同一条理由的延伸：**引擎的外部接线
- * 一律显式传入，不做模块级注册表**（框架 §3.2）。但它**没有**进 `ResolveDeps` ——
- * 同文件头「把只有战斗看得见的特殊性关在一个文件里，比做成公共 API 更安全」的取舍：
- * `resolve()` 的第 ④ 步不需要这个旋钮，就不该为战斗多长一个。
- *
- * M5 有了真触发器源之后，那条测试可以换成真触发器，本参数即可退役。
- */
-export type TriggerQueue = (state: GameState, events: readonly GameEvent[]) => number;
 
 /**
  * 第 ③ 步：把快照逐条应用出去，走 `act.strike` → `act.hit` 管线。
@@ -403,6 +352,36 @@ export type TriggerQueue = (state: GameState, events: readonly GameEvent[]) => n
  *   ★ **跳过第 ⑤ 步死亡结算** —— 同归于尽的全部原因；
  *   ★ **第 ④ 步排出来的触发器留在主栈上** —— 只入栈不结算，等第 ④ 步开闸。
  *
+ * ── ★ 跨批次顺序：整批只入栈**一次** ★ ──────────────────────────────────
+ * 第二处偏离有一个不显眼但决定性的细节：**入栈的时机**。栈是 LIFO，`queueTriggers`
+ * 每调一次就压一次 ⇒ **后压的那一批先跑**。而本函数在开闸之前会经历一整批出手，
+ * 逐击调 `queueTriggers` 的写法于是让整场战斗的触发器按**逆因果序**结算 ——
+ * 后出手的单位的触发器先响，整段倒过来（这正是本条修复的缺陷，两条测试见
+ * `rules/__tests__/combat.test.ts` 的「★ 跨批次的累积顺序」）。
+ * 同一个缺陷在 `resolve/deaths.ts` 的不动点循环上还有第二个实例（逐**波**入栈），
+ * 那里用的是逐字相同的修法。
+ *
+ * 所以第 ④ 步在这里拆成两半：逐击调 {@link collectOrderedTriggers}（**只匹配、只排序**）
+ * 把有序条目累积到 `queued`，循环跑完之后调一次 {@link enqueueTriggers}。
+ * 最终顺序 = 「事件发出序为外层键、时序规则 1 为内层键」的字典序，
+ * 也正是 `resolve/triggers.ts` 的 `queueTriggers` 声明的那条不变量。
+ * ⚠ 上面那两条测试只钉住**外层键**（它们的卡带 `filter: {source: SELF}`，每批单元素）；
+ *   内层键在战斗路径上由「★ 时序规则 1：一击命中三个宿主」那一条钉住。
+ *
+ * ⚠ **匹配不能跟着一起推迟**：`collectOrderedTriggers` 的 `zone` / `once` /
+ *   `filter` / `cond` 与排序键读的都是**当前状态**。整批打完再匹配 = 拿最终盘面去判，
+ *   `cond` 会看到后面几击的伤害。逐击匹配保住的正是「匹配时看到的世界」。
+ *   这一条**有测试钉着**：「★ 匹配不能推迟到批次末尾」——`cond: cond.dead(靶子)` 的
+ *   一对互斥触发器，逐击匹配读到 [5, 5, 9]，整批末尾匹配读到 [9, 9, 9]。
+ *   （那条防线只能靠"血量"立起来：**死亡不会改变 `zone`** —— 第 ③ 步跳过死亡结算，
+ *   中途被打死的单位仍站在场上，所以"中途死掉的订阅者整条消失"在战斗里不会发生。
+ *   那是死亡结算那条路径上的形态，见 `resolve/deaths.ts`。）
+ *
+ * ⚠ 中途抛错（`ResolutionLoopError` / 拦截器那两个异常）时 `queued` 里已经攒下的条目
+ *   **不会入栈** —— 与那些异常的既有契约一致：那份 `state` 是半跑的，本来就该被丢弃，
+ *   不该拿去接着跑。（走 `apply()` 的一方丢的是 draft，**入参状态一字未改**，
+ *   不必"从快照恢复"—— 权威表述见 `resolve/resolve.ts` 的 `ResolutionLoopError`。）
+ *
  * `state.winner` 与 `state.pendingInput` 在本步都不可能变：判负只在 `processDeaths`
  * 里发生（已跳过），挂起在 M3 里没有源（见文件头的原子性说明）。
  *
@@ -411,21 +390,12 @@ export type TriggerQueue = (state: GameState, events: readonly GameEvent[]) => n
  * 真撞上它就说明拦截器链成了环（M5），那与 `resolve()` 里那一条是同一类故障，
  * 所以复用同一个异常。抛错前排空事件日志（`events/log.ts` 的不变量对抛错路径同样成立），
  * 但**只带得走日志里还剩的那一批**：第 ① 步已经排空过一次，那批事件在 `phase.ts` 手里。
- *
- * `queue` 是第 ④ 步排队的接线（见 {@link TriggerQueue}），生产恒为 `queueTriggers`。
  */
-function applyStrikes(
-  state: GameState,
-  plan: readonly PlannedStrike[],
-  deps: ResolveDeps,
-  queue: TriggerQueue,
-): void {
+function applyStrikes(state: GameState, plan: readonly PlannedStrike[], deps: ResolveDeps): void {
   let guard = 0;
+  // ★ 整批出手排出来的触发器**先攒在这里**，循环跑完才一次性入栈（见下面 ④ 与函数注释）。
+  const queued: QueuedTrigger[] = [];
   for (const planned of plan) {
-    // ★ 运行时哨兵：这一击的冻结值必须仍然等于攻击者的生效 atk（见 assertFrozenAmount）。
-    //   M3 里恒真；M5 引入"能在批次中途改 atk 的东西"时它会当场抛。
-    assertFrozenAmount(state, planned);
-
     // 用 `pushAct` 造条目再整段摘下来 —— 栈条目的构造只有 `resolve/push.ts` 一处，
     // 本文件不自己写 `{ via: "inline", ... }` 字面量。
     const chain: PendingAction[] = [];
@@ -454,8 +424,10 @@ function applyStrikes(
       // 这一步自己压出来的东西全部落在 `floor` 之上，摘走它们即得本击的连锁。
       const floor = state.stack.length;
 
-      // ② 替换效果（圣盾、免疫、"改为…"，M5）
-      const action = applyInterceptors(state, ctx, act);
+      // ② 替换效果（圣盾、免疫、"改为…"）★ M5/T2 起是真实现
+      //   ⚠ 拦 `act.hit` 对战斗同样生效：出手在第 ③ 步里走的是
+      //     `act.strike` → `act.hit` 管线（v2 §3.4），而本地链条上的每一步都跑这里。
+      const action = applyInterceptors(state, ctx, act, deps);
       if (isCancelled(action)) {
         // 被取消 ≠ 什么都没发生：拦截器的 `then` 照样执行（IR v1 §4.2），
         // 它属于"这一击"的连锁，收进链条继续跑；第 ④~⑥ 步与 `resolve()` 一样跳过。
@@ -468,17 +440,30 @@ function applyStrikes(
       runHandler(state, ctx, action, deps);
       harvest(state, floor, chain);
 
-      // ④ 事后触发：★ 只入栈不结算 —— 压在主栈上，留给第 ④ 步开闸
-      //   ⚠ 必须排在上面那次 `harvest` **之后**：反过来的话这一批刚排队的触发器会被
-      //     一起摘进本地链条，等于批次中途就把它们跑了（见 {@link TriggerQueue}）。
-      queue(state, state.eventLog.slice(mark));
+      // ④ 事后触发：★ 只匹配、只排序 —— **不压栈**，有序条目攒进 `queued`
+      //   逐击匹配（而不是整批打完再匹配）是必须的：`collectOrderedTriggers` 的
+      //   `zone` / `once` / `filter` / `cond` 与排序键读的都是**此刻**的盘面
+      //   （「★ 匹配不能推迟到批次末尾」那一条测试钉着它）。
+      //   压栈推迟到整批之后，理由见函数注释的「跨批次顺序」一段。
+      //   ⚠ 仍然排在上面那次 `harvest` **之后**：这一步已经不往主栈上放东西，
+      //     两行对调当下没有可观测差别；但「本击的连锁」与「本击之后的反应」这条
+      //     分界就是由"handler 压的都在 harvest 之前、排队产物都在它之后"表达的，
+      //     调换会让任何把入栈搬回循环里的改动当场泄漏进本地链条
+      //     （`rules/__tests__/combat.test.ts` 的「★ 触发器只入栈不结算」钉着它）。
+      for (const trigger of collectOrderedTriggers(state, state.eventLog.slice(mark), deps)) {
+        queued.push(trigger);
+      }
 
       // ⑤ ★★ 死亡结算在本步被**跳过** ★★（v2 §4.2 第 ③ 步，见文件头）
 
       // ⑥ 光环重算（时序规则 4：每步重算，不做增量）
-      refreshAuras(state);
+      refreshAuras(state, deps);
     }
   }
+
+  // ★ 整批只入栈这一次 —— 于是整场战斗的触发器是「事件发出序 × 时序规则 1」的字典序。
+  //   逐击入栈会被 LIFO 整段倒过来（见函数注释的「跨批次顺序」）。
+  enqueueTriggers(state, queued);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -493,6 +478,12 @@ function applyStrikes(
  *    并在末尾做 base 归零判负（v2 §4.1「任意时刻」）。同归于尽在这里成立：
  *    第 ③ 步没人离场，所以互相打死的两个单位在**同一波**里被收走。
  * 2. `refreshAuras` —— 一波单位离场会让依附它们的光环失效，按六步顺序补上这一步。
+ *    ⚠ M5/T3 之后这一行是**幂等的复述**：`processDeaths` 自己在每一轮判死之前就重算
+ *    （v2 §4.2 第 ④ 步原文把光环重算写在不动点循环里，见 `resolve/deaths.ts` 文件头），
+ *    末轮那次退出前的重算已经把盘面算准。保留它是为了让本函数与规范第 ④ 步的三段
+ *    逐字对齐 —— 删掉之后读者要跳到另一个文件才知道这一步在哪做的。
+ *    也因此它**没有独立的可观测面**：注入 bug 到这一行不会有测试变红，
+ *    真正被钉住的是 `processDeaths` 里的那次。
  * 3. `resolve()` —— **开闸**：第 ③ 步排在主栈上的触发器、以及 `processDeaths` 排出来的
  *    亡语，从这里开始跑。它们每弹一条都带自己的第 ⑤ 步死亡结算，
  *    于是"亡语又打死了人"会自然地再收一轮 —— 这就是"循环至不动点"，
@@ -503,11 +494,13 @@ function applyStrikes(
  * ⚠ 第 3 段那次 `resolve()` 是**开闸本身**，删掉它整个第 ③ 步排上主栈的东西就永远不跑。
  *   `processDeaths` 那一环有 5 条测试钉着，开闸这一环单独钉在
  *   `rules/__tests__/combat.test.ts` 的「★ 第 ④ 步给结算栈开闸」上 ——
- *   M3 没有真触发器源，所以那条测试直接往主栈上摆一条站位条目。
+ *   那条测试**故意不接任何触发器源**，直接往主栈上摆一条站位条目：对这一次
+ *   `resolve()` 来说，一条已经在栈上的动作与一条刚被排队压上去的触发器完全同形，
+ *   于是"开闸"这件事有一道**独立于触发器匹配**的防线（M5 的匹配写坏了它照样红）。
  */
 function settleCombat(state: GameState, deps: ResolveDeps): GameEvent[] {
-  processDeaths(state);
-  refreshAuras(state);
+  processDeaths(state, deps);
+  refreshAuras(state, deps);
   return resolve(state, deps);
 }
 
@@ -524,16 +517,9 @@ function settleCombat(state: GameState, deps: ResolveDeps): GameEvent[] {
  * 调用之后 `state.winner` 可能已经非空（战斗打穿了 base）——
  * 调用方必须先判它再决定要不要继续走第 ⑤ 步（`resolve/resolve.ts` 的偏离 B 同款理由：
  * 对局结束之后不该再有后续时序）。
- *
- * `queue` 只有测试会传（见 {@link TriggerQueue}）：生产恒走默认值 `queueTriggers`，
- * `phase.ts` 的 `runCombat` 也只传两个参数。
  */
-export function resolveStrikes(
-  state: GameState,
-  deps: ResolveDeps,
-  queue: TriggerQueue = queueTriggers,
-): GameEvent[] {
+export function resolveStrikes(state: GameState, deps: ResolveDeps): GameEvent[] {
   const plan = planStrikes(state);
-  applyStrikes(state, plan, deps, queue);
+  applyStrikes(state, plan, deps);
   return settleCombat(state, deps);
 }

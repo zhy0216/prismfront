@@ -83,6 +83,12 @@ risk: high
     （`combat.ts` 的 `assertFrozenAmount` → 抛 `StrikeAmountDriftError`）：
     M3 恒真，M5 引入"能在批次中途改 atk 的拦截器/触发器"时**第一次跑就当场抛**。
     哨兵是临时防线，M5 按 `PlannedStrike.amount` 的 TODO 二选一落地后连同错误类删掉。
+  - ✅ **已兑现（M5/T5）**：二选一取了「给 IR 的 `act.strike` 加可选 `amount`」
+    （运行时超集，编写子集不开放；`irVersion` 2.2.0 → 2.3.0）。冻结值现在随动作
+    走完管线（`strikeActOf` 填、`strikeHandler` 用），`assertFrozenAmount` 与
+    `StrikeAmountDriftError` **已删除**，本文这段是历史记录。
+    另：M5 落地后实测哨兵**已不恒真** —— 拦截器的 `then` 与光环中途失效两条路
+    都能改批次中途的 atk（触发器那一支改不了）。详见 M5 文件的 T5 条目。
 - [x] ③ 逐条应用：走 `act.strike` → `act.hit` 管线
   - ★ **不做中途死亡结算**
   - ★ **触发器只入栈不结算**
@@ -142,6 +148,12 @@ test("stunned 单位不进入快照");
 > 桩比真亡语**更强**：它把上场时刻放在第 ③ 步中途，比亡语（第 ④ 步之后）更早。
 > **M5 落地后应当把它换成真亡语版本**（`on: "unit_died"` + `act.summon` 的卡），
 > 断言不用改；换完桩整段删掉。等价性论证写在 `summonOnFirstHit` 的文档注释里。
+>
+> ✅ **已于 M5/T1 兑现**：桩 `summonOnFirstHit` 整段删除，换成一张带 `deathrattle`
+> 的真卡（`T_DEATH_GUARD`，经 `testkit` 的 `cardDeps` / `putCard` 接线）。
+> 事件流断言只多了亡语那条链本身产出的 `unit_died` / `unit_summoned`，
+> "本轮一击未出"那部分一字未改。同一条目也退役了 `rules/combat.ts` 的
+> `TriggerQueue` 参数（第 ③ 步的排队从此只有一条路径）。
 
 ### 这四条**不是空壳**：逐条做过变异验证
 
@@ -157,11 +169,14 @@ test("stunned 单位不进入快照");
 | 目标格 clamp 到 `[0,8]` / 对 9 取模 | 方向越界 → 敌方基地 |
 | 把 `harvest` 挪到排队之后（= 批次中途就跑触发器） | ★ 触发器只入栈不结算（1 条） |
 | 删掉第 ④ 步那次 `resolve()`（不开闸） | ★ 第 ④ 步开闸 + ★ 触发器只入栈不结算（2 条） |
-| 拿掉 `assertFrozenAmount` 那道哨兵 | ★ 批次中途改 atk ⇒ 哨兵当场抛（1 条） |
+| 拿掉 `assertFrozenAmount` 那道哨兵 | ★ 批次中途改 atk ⇒ 哨兵当场抛（1 条）※ |
 | `concludeMatch` 改成空实现（`phase.ts`） | 终局清栈 + ★ 认输时栈上还剩着东西（2 条） |
 
 第 3 条为此加了三个"陷阱位"守卫（p1 的 0 / 6 / 8 号格站人）：
 越界格空着的话，`clamp` / 取模 / 直接进 base 三种实现**都**落到 base，断言全绿却什么都没验。
+
+※ 这一行是 M3 当时的实验记录：`assertFrozenAmount` 已在 M5/T5 退役（见上面第 ② 步的
+✅ 注），今天在仓库里 grep 不到它。对应的实验换成了「删掉 `strikeActOf` 的 `amount:` 一行」。
 
 后四行是第二轮补修加的（前三行落在 `rules/combat.ts`，最后一行落在 `rules/phase.ts`）：
 

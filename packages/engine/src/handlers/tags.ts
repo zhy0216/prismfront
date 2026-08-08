@@ -1,7 +1,12 @@
-// 属性修改：`act.set_tag` / `act.mod_tag` / `act.buff`。
-// 来源：IR v1 §3.4（三个动作的签名）、IR v1 §2.3（附魔实例：ench / source / duration）、
+// 属性修改：`act.set_tag` / `act.mod_tag` / `act.buff` / `act.set_flag`。
+// 来源：IR v1 §3.4（四个动作的签名）、IR v1 §2.3（附魔实例：ench / source / duration）、
 //       框架 §4.1 时序规则 4（光环是重算而非增量）、v2 §2.3（direction 是普通 Tag）、
 //       v2 §5（`buffed` / `direction_changed` 的负载）。
+//
+// ⚠ `act.set_flag` 是 **M5/T2 才补上的**：它不是"顺手实现一个 op"，而是拦截器的
+//   标准用例硬要求的一环 —— IR v1 §10.6 的圣盾把 `then` 写成
+//   `[set_flag(SELF, "divine_shield", false)]`，没有这个 handler，"挡一次"就退化成
+//   "永远挡"，而那种测试只能验证「拦截器响了」，验证不了「盾用掉了」。
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // ★ `set_tag` / `mod_tag` 写 `base`，不写 `tags` —— 并且这就是"扛得住沉默"的定义 ★
@@ -26,7 +31,7 @@ import { evalNum } from "../eval/index.ts";
 import { emitEvent } from "../events/index.ts";
 import type { ActHandler } from "../resolve/index.ts";
 import type { EntityData, GameState } from "../state/index.ts";
-import { tagOf } from "../state/index.ts";
+import { hasFlag, maskWith, tagOf } from "../state/index.ts";
 import { frozenEntities, snapshot, sourceOf } from "./targets.ts";
 
 /**
@@ -140,5 +145,45 @@ export const buffHandler: ActHandler<"act.buff"> = (env, act) => {
   for (const target of frozenEntities(env, targets)) {
     target.enchantments.push({ ench: act.ench, source: source ?? 0, duration: ench.duration });
     emitEvent(env.state, { name: "buffed", source, target: target.id, ench: act.ench });
+  }
+};
+
+/**
+ * `act.set_flag{target, flag, value}` —— 置/清一个标志位（IR v1 §3.4）。
+ *
+ * ⚠ `value` 是 **boolean**，不是 `Num`（`ir/src/types/act.ts` 点名说了），
+ * 所以这里一次 `evalNum` 都没有 —— 顺带地，本动作**一次 RNG 都不推进**。
+ *
+ * ── 写 `baseFlags`，与 {@link writeTag} 写 `base` 是同一条规矩 ────────────────
+ * `flags` 是派生值，每一步都会被 `refreshAuras` 从 `baseFlags` 重算覆盖
+ * （框架 §4.1 时序规则 4，M5/T3 之后还会加上附魔与光环的 Σ）。写 `flags` 等于写一个
+ * 下一行就被抹掉的缓存 —— 症状是"圣盾用掉了又回来了"。顺手把派生值对齐，
+ * 免得同一步里后续动作读到旧值（第 ⑥ 步才会重算）。
+ *
+ * ⚠ 代价，与 `act.set_tag` 那条完全对称：T3 补上 Σ 之后，**附魔/光环授予的标志位
+ *   清不掉** —— 本动作只动 `baseFlags`，下一次重算又会把 Σ 加回来。
+ *   语义因此是清楚的：要能被清掉就写卡面标志位，要持续生效就挂附魔/光环。
+ *
+ * ── 不发事件 ────────────────────────────────────────────────────────────────
+ * v2 §5 的 25 个事件名里**没有**"标志位变化"这一条（`buffed` 说的是属性/附魔）。
+ * 借一个名字发出去，只会让监听 `buffed` 的触发器为一次不存在的加成而触发；
+ * 自造一个新名字则要动 IR 的 `EventName`（`irVersion` minor + 触发器词汇表跟进）。
+ * 所以这里**一个事件都不发**，可观测面是盘面本身 —— 与 `handlers/board.ts` 的
+ * 那些位置原语同一个取舍。
+ *
+ * **值没变就不写**：与 {@link writeTag} 的"值没变不发事件"同一条理由，
+ * 且让"这一步真的改了东西"在测试里可判别（读的是**生效值**，`state/queries.ts` 的 `hasFlag`）。
+ */
+export const setFlagHandler: ActHandler<"act.set_flag"> = (env, act) => {
+  const targets = snapshot(env, act.target);
+  if (targets.length === 0) {
+    return;
+  }
+  for (const target of frozenEntities(env, targets)) {
+    if (hasFlag(target, act.flag) === act.value) {
+      continue;
+    }
+    target.baseFlags = maskWith(target.baseFlags, act.flag, act.value);
+    target.flags = maskWith(target.flags, act.flag, act.value);
   }
 };

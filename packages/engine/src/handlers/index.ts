@@ -13,7 +13,7 @@
 //   draw.ts     act.draw
 //   move.ts     act.move（含"放单位到格"）/ act.swap
 //   summon.ts   act.summon —— 本目录唯一需要**卡表**的 handler
-//   tags.ts     act.set_tag / act.mod_tag / act.buff
+//   tags.ts     act.set_tag / act.mod_tag / act.buff / act.set_flag（M5/T2 补入）
 //   control.ts  ★ act.when / act.repeat / act.for_each / act.nothing
 //               —— **规则 2「每轮重新求值」的落点**，与规则 3 的对照写在那里
 //   input.ts    act.select_target —— 本目录唯一会**挂起**的 handler（E6 补入）
@@ -53,7 +53,7 @@
 //    写成"先把两支都算出来再选"会多消耗一整条分支的 RNG —— 单测全绿、回放失真。
 //
 // ═══════════════════════════════════════════════════════════════════════════
-// 30 个 op 里实现了 16 个 —— 其余的行为
+// 30 个 op 里实现了 17 个 —— 其余的行为
 // ═══════════════════════════════════════════════════════════════════════════
 // M4 的任务书只要求「先支持 8–10 个最常用 op」，但表的类型是 `Record<ActOp, …>`：
 // **一个都不能少**，少一个编译不过。于是尚未实现的 op 一律挂 {@link notImplemented}
@@ -73,7 +73,7 @@ import { drawHandler } from "./draw.ts";
 import { selectTargetHandler } from "./input.ts";
 import { moveHandler, swapHandler } from "./move.ts";
 import { summonHandler } from "./summon.ts";
-import { buffHandler, modTagHandler, setTagHandler } from "./tags.ts";
+import { buffHandler, modTagHandler, setFlagHandler, setTagHandler } from "./tags.ts";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 未实现的 op：显式占位
@@ -145,7 +145,8 @@ export const ACT_HANDLERS: HandlerTable = {
   "act.silence": notImplemented("act.silence"),
   "act.set_tag": setTagHandler,
   "act.mod_tag": modTagHandler,
-  "act.set_flag": notImplemented("act.set_flag"),
+  // ★ M5/T2 补入：IR v1 §10.6 的圣盾把它写在 `intercept.then` 里（"把盾用掉"）。
+  "act.set_flag": setFlagHandler,
 
   // ── 位置四件套 + 出手（v2 §3.4）─────────────────────────────────────────
   "act.move_to": notImplemented("act.move_to"),
@@ -221,5 +222,5 @@ export { drawHandler, drawOne } from "./draw.ts";
 export { selectTargetHandler } from "./input.ts";
 export { moveHandler, swapHandler } from "./move.ts";
 export { summonHandler } from "./summon.ts";
-export { buffHandler, modTagHandler, setTagHandler } from "./tags.ts";
+export { buffHandler, modTagHandler, setFlagHandler, setTagHandler } from "./tags.ts";
 export { frozenEntities, singleTarget, snapshot, sourceOf, targetPlayers } from "./targets.ts";
