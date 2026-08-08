@@ -8,13 +8,17 @@ export type IRVersion = `${number}.${number}.${number}`;
  * 本仓库产出与接受的 IR 版本。
  *
  * **架构 §10 第 1 项（规范一致性清理）**：DSL v2 §0 写 `"2.0.0"`、§11 写 `"2.1.0"`，
- * 两处不一致 —— **一律以 `"2.1.0"` 为准**（架构 §5.1 同样写死 2.1.0）。
+ * 两处不一致 —— **规范基线一律以 `"2.1.0"` 为准**（架构 §5.1 同样写死 2.1.0）。
  * 2.1.0 = v2 的格子战斗语义（major 2）+ v2.1 的英雄/色门/融合增补（minor 1）。
  *
  * 版本规则（IR v1 §8）：新增 op = minor；改变既有 op 的语义或字段 = major。
  * engine 声明支持区间，major 不匹配直接拒载，不做"尽力而为"。
+ *
+ * **2.1.0 → 2.2.0（M4 / 决策 #9）**：新增 `cond.has_color`（v2.1 §11.4 用
+ * `data.colors` 取代 `faction` 后留下的"按颜色筛卡池"缺口）。只加了一个 op，
+ * 既有 op 的语义与字段一个没动 —— 按 §8 就是 **minor**，major 仍是 2，旧 bundle 照常加载。
  */
-export const IR_VERSION = "2.1.0" satisfies IRVersion;
+export const IR_VERSION = "2.2.0" satisfies IRVersion;
 
 /** `typeof IR_VERSION`，用于把 bundle 的版本钉成字面量类型。 */
 export type CurrentIRVersion = typeof IR_VERSION;

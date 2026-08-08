@@ -1,0 +1,36 @@
+# 包级 bunfig —— 架构 §7 覆盖率闸门的**实际生效点**（风险登记册 R-M0-2 的处置）。
+#
+# 完整论证见 `packages/engine/bunfig.toml` 的文件头。三条要点：
+#   1. bun 只从 cwd 读 bunfig，而 `turbo test` 的 cwd 是包目录 → 根 bunfig 不生效，
+#      所以每个有测试的包都要有自己的一份。
+#   2. `coverageThreshold` 必须写**标量**：行内表 `{ line = 0.8 }` 会被 bun 1.3.14
+#      静默忽略（写成 `{ line = 1.0 }` 照样 exit 0）。架构 §7 给的就是那个坏写法。
+#   3. 标量阈值**逐文件**判定，不看全局 —— 全局 99% 也救不了一个 70% 的文件。
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# ★ 比 engine / ir 多的那一行：coveragePathIgnorePatterns（M4/E5 实测）★
+# ═══════════════════════════════════════════════════════════════════════════
+# cards 是全仓**第一个在运行时依赖别的包**的包（engine 对 ir 只有 `import type`，
+# 类型被擦掉，运行时一个 ir 文件都不加载）。而 `defineCard` / `validate` 是真函数：
+# 只要跑本包的测试，`@prismfront/ir` 的整棵 src 都会被加载进覆盖率表 ——
+# 其中绝大部分（printer、builder 的其余 op、校验器的其余分支）本包一行都不会碰到，
+# 逐文件闸门于是必红，与本包自己的覆盖率好坏无关。
+#
+# 忽略掉包外路径**不留缺口**：ir 的覆盖率由它自己的 `bunfig.toml` 在
+# `bunx turbo test` 里逐文件把关，那才是它该被度量的地方。
+# 路径按 cwd（= 本包目录）解析，所以写成 `../ir/**`。
+# 将来 cards 运行时再依赖别的包，这里要跟着加一条。
+#
+# ── M4/E6 加的第二条：`../engine/**` ────────────────────────────────────────
+# 单卡测试要断言的是「打出去有正确效果」，所以它真的跑引擎（`@prismfront/engine/testkit`
+# 的 `openGame` / `putUnit` / `castCard` / `fightOnce`）。engine 是 **devDependency**
+# （架构 §2.2 禁令 4：cards 的运行时只依赖 ir），但测试期它一样会被整棵加载进覆盖率表，
+# 与 ir 是同一个成因、同一个处置。engine 的覆盖率由 `packages/engine/bunfig.toml`
+# 在 `bunx turbo test` 里逐文件把关，这里忽略它**不留缺口**。
+
+[test]
+# 相对 cwd（= 本包目录）解析，所以要回到仓库根。
+preload = ["../../test-setup.ts"]
+coverage = true
+coverageThreshold = 0.8
+coveragePathIgnorePatterns = ["../ir/**", "../engine/**"]

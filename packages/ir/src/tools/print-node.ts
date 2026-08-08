@@ -23,6 +23,7 @@ import type {
   Act,
   CardKind,
   CardRef,
+  Color,
   Cond,
   Num,
   Pool,
@@ -43,6 +44,7 @@ import {
 } from "./format.ts";
 import {
   boardKindConstantName,
+  COLOR_PREDICATE_NAMES,
   EVENT_ENTITY_CONSTANTS,
   GLOBAL_NUM_CONSTANTS,
   KIND_PREDICATE_NAMES,
@@ -64,6 +66,10 @@ function printZoneArg(zone: ZoneName | readonly ZoneName[], ctx: PrintContext): 
 
 function printKindArg(kind: CardKind | readonly CardKind[], ctx: PrintContext): string {
   return typeof kind === "string" ? quote(kind) : emitArray(kind.map(quote), ctx);
+}
+
+function printColorArg(color: Color | readonly Color[], ctx: PrintContext): string {
+  return typeof color === "string" ? quote(color) : emitArray(color.map(quote), ctx);
 }
 
 function printSlotArg(slot: SlotRef | readonly SlotRef[], ctx: PrintContext): string {
@@ -373,6 +379,20 @@ export function printCond(node: Cond, ctx: PrintContext): string {
           : emitCall(predicate, [printSel(node.of, inner)], ctx);
       }
       return emitCall("IsKind", [printSel(node.of, inner), printKindArg(node.kind, inner)], ctx);
+    }
+    case "cond.has_color": {
+      if (typeof node.color === "string") {
+        // `IsRed()` / `IsBlue()`：省略实参即判迭代游标 `IT`（卡池过滤的写法，决策 #9）。
+        const predicate = COLOR_PREDICATE_NAMES[node.color];
+        return node.of.op === "sel.it"
+          ? emitCall(predicate, [], ctx)
+          : emitCall(predicate, [printSel(node.of, inner)], ctx);
+      }
+      return emitCall(
+        "HasColor",
+        [printSel(node.of, inner), printColorArg(node.color, inner)],
+        ctx,
+      );
     }
     case "cond.has_tribe":
       return emitCall("HasTribe", [printSel(node.of, inner), quote(node.tribe)], ctx);

@@ -1,7 +1,7 @@
 // cond.* 节点族：条件（求值得到 boolean）。
 // 来源：IR v1 §3.3 + §9（基线）、DSL v2 §3.3（增改）、§7（TS 权威类型）。
 
-import type { CardKind } from "./card-kind.ts";
+import type { CardKind, Color } from "./card-kind.ts";
 import type { Num } from "./num.ts";
 import type { Sel } from "./sel.ts";
 import type { SlotRef } from "./slot.ts";
@@ -52,6 +52,18 @@ export type Cond =
   | { op: "cond.has_flag"; of: Sel; flag: FlagName }
   /** 全称量化。空集 → `true`。 */
   | { op: "cond.is_kind"; of: Sel; kind: CardKind | readonly CardKind[] }
+  /**
+   * 按颜色筛卡（决策 #9，irVersion 2.2.0 新增；v2.1 §11.4 用 `data.colors` 取代了 `faction`）。
+   *
+   * 语义 = `of` 中**每个**成员的 `data.colors` 与 `color` 参数集合**有交集**：
+   * `of` 上全称量化（空集 → `true`）、`color` 列表上存在量化，与 `cond.is_kind` 完全一致，
+   * 不引入第四种量化形态。推论：**融合卡（`colors` 长度 2）同时命中它的两个颜色** ——
+   * "发现一张红牌"包含红蓝融合卡（《数值基准》§6.2）。
+   *
+   * 读的是**卡面数据**不是实体 tag：`card.pool` 位上过滤 CardDef 的 `data.colors`，
+   * 作用在场上实体时取该实体源卡的颜色。与 `cond.is_kind` 读 `data.kind` 完全平行。
+   */
+  | { op: "cond.has_color"; of: Sel; color: Color | readonly Color[] }
   /** 全称量化。空集 → `true`。 */
   | { op: "cond.has_tribe"; of: Sel; tribe: TribeName }
   /** 全称量化。空集 → `true`。 */

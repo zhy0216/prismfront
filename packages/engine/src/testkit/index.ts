@@ -15,6 +15,10 @@
 //   推进    {@link passOnce} / {@link passThroughCombat} / {@link fightOnce} / {@link playCard}
 // 外加两条读盘的小工具（{@link damageOf} / {@link eventNames}）与一条绕开意图层的
 // 直驱结算管线（{@link runActs}）。
+// 服务 `packages/cards` 单卡测试的三条（M4/E6 补入）：
+//   {@link cardFace}    卡表里的卡面 → 摆盘用的 `Face`（配 {@link putUnit} 摆净水随从）
+//   {@link castCard}    打出**卡表里的一张牌**，跑它的 `play` 脚本（可绑 `sel.target`）
+//   {@link respondNow}  回应挂起点（`act.select_target` 之后接着结算）
 //
 // 使用方：`src/__tests__/`（走查与确定性）、M3 的四条战斗验收测试
 // （`rules/__tests__/combat.test.ts`）、以及 `packages/cards` 的单卡测试（M4 起）。
@@ -34,15 +38,23 @@
 // （`state/entity.ts` 的血量记账：当前血量 = `tags.health - damage`）。
 // 所以测试必须自己把卡面写进 `entity.base`。M4 接上卡表后本函数就没有存在的必要了。
 
-import type { Act, CardId, EntityId, FlagName, RulesConfig, TagKey } from "@prismfront/ir";
+import type { Act, Card, CardId, EntityId, FlagName, RulesConfig, TagKey } from "@prismfront/ir";
 import type { GameEvent } from "../events/index.ts";
-import { M2_DEPS, moveToZone, placeOnSlot } from "../handlers/index.ts";
+import { DEFAULT_DEPS, moveToZone, placeOnSlot } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
 import { pushActs, resolve } from "../resolve/index.ts";
 import type { ApplyResult, Intent } from "../rules/index.ts";
 import { apply, createGame, DEFAULT_RULES } from "../rules/index.ts";
 import type { EntityData, GameState, PlayerId } from "../state/index.ts";
-import { cloneState, createCtx, getEntity, getZone, maskWith, playerData } from "../state/index.ts";
+import {
+  cloneState,
+  createCtx,
+  getEntity,
+  getZone,
+  maskWith,
+  playerData,
+  withCtx,
+} from "../state/index.ts";
 
 /** 一次推进的产物：新状态 + 这一段的事件流（与 `ApplyResult` 的 `ok:true` 分支同形）。 */
 export interface Step {
@@ -302,6 +314,22 @@ export function damageOf(state: GameState, id: EntityId): number {
   return entity.damage;
 }
 
+/**
+ * 一个实体**当前站在哪一格**（不在场 ⇒ `null`）。
+ *
+ * 断言位置类效果（`act.swap` / `act.move_to` / `act.shift`）时该读它，**不要**只读事件流：
+ * `handlers/move.ts` 的 `swapHandler` 在调 `swapSlots` **之前**就把两个 `fromSlot` 存下来，
+ * 两条 `unit_moved` 完全由那对快照拼出 —— 换位真的没发生（`swapSlots` 谎报成功）时
+ * 事件流**一字不差**。事件是意图的复述，盘面才是效果的回读。
+ */
+export function slotOf(state: GameState, id: EntityId): number | null {
+  const entity = getEntity(state, id);
+  if (entity === undefined) {
+    throw new Error(`夹具错误：实体 ${id} 不存在`);
+  }
+  return entity.slot;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 相位推进
 // ═══════════════════════════════════════════════════════════════════════════
@@ -312,12 +340,12 @@ export function damageOf(state: GameState, id: EntityId): number {
  * 起手调度是双方聚合的单条 intent（`rules/intent.ts` 的文件头），
  * 所以"不换牌"就是两个空数组。要测调度本身请直接构造 intent，别用这个夹具。
  */
-export function startMatch(state: GameState, deps: ResolveDeps = M2_DEPS): Step {
+export function startMatch(state: GameState, deps: ResolveDeps = DEFAULT_DEPS): Step {
   return expectOk(apply(state, { t: "mulligan", player: 0, toss: [[], []] }, deps));
 }
 
 /** 让**当前持有 `priority` 的那一方** pass 一次。 */
-export function passOnce(state: GameState, deps: ResolveDeps = M2_DEPS): Step {
+export function passOnce(state: GameState, deps: ResolveDeps = DEFAULT_DEPS): Step {
   return expectOk(apply(state, { t: "pass", player: state.priority }, deps));
 }
 
@@ -347,7 +375,7 @@ export function passOnce(state: GameState, deps: ResolveDeps = M2_DEPS): Step {
  * 一次 pass 都不做就静默返回原状态，断言以"少了几条事件"的形式红，
  * 那时很难看出真正的原因。
  */
-export function passThroughCombat(state: GameState, deps: ResolveDeps = M2_DEPS): Step {
+export function passThroughCombat(state: GameState, deps: ResolveDeps = DEFAULT_DEPS): Step {
   if (state.phase !== "actions") {
     throw new Error(`夹具错误：passThroughCombat 要从 actions 相位起跳（phase=${state.phase}）`);
   }
@@ -375,7 +403,7 @@ export function passThroughCombat(state: GameState, deps: ResolveDeps = M2_DEPS)
  * 对局**在战斗中结束**时没有 `combat_ended`（v2 §4.1：base 归零即刻分胜负，
  * 之后不该再有后续时序），这时取到末尾。
  */
-export function fightOnce(state: GameState, deps: ResolveDeps = M2_DEPS): Step {
+export function fightOnce(state: GameState, deps: ResolveDeps = DEFAULT_DEPS): Step {
   const step = passThroughCombat(state, deps);
   const names = eventNames(step.events);
   const from = names.indexOf("combat_began");
@@ -393,7 +421,7 @@ export function playCard(
   state: GameState,
   card: EntityId,
   slot: number,
-  deps: ResolveDeps = M2_DEPS,
+  deps: ResolveDeps = DEFAULT_DEPS,
   player: PlayerId = state.priority,
 ): Step {
   const intent: Intent = { t: "play_card", player, card, slot };
@@ -425,7 +453,7 @@ export function runActs(
   state: GameState,
   acts: readonly Act[],
   self: EntityId,
-  deps: ResolveDeps = M2_DEPS,
+  deps: ResolveDeps = DEFAULT_DEPS,
 ): Step {
   const draft = cloneState(state);
   pushActs(draft, acts, createCtx(self));
@@ -444,7 +472,7 @@ export function strikeNow(
   state: GameState,
   attacker: EntityId,
   target: EntityId,
-  deps: ResolveDeps = M2_DEPS,
+  deps: ResolveDeps = DEFAULT_DEPS,
 ): Step {
   return runActs(
     state,
@@ -458,4 +486,115 @@ export function strikeNow(
     attacker,
     deps,
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 卡表驱动：打出一张真卡（M4/E6，`packages/cards` 的单卡测试）
+// ═══════════════════════════════════════════════════════════════════════════
+// 单卡测试要问的是「这张卡打出去有没有正确效果」，而前面几节的夹具都只认**数字与动作**，
+// 不认「一张卡」：
+//   - 净水随从要摆上场，卡面得从卡里取 → {@link cardFace} 配 {@link putUnit}
+//   - 法术要跑 `script.play`，而 `runActs` 只绑 SELF，卡里却常要读 `sel.target`
+//     （火球术打谁、换位术换哪一个）→ {@link castCard}
+//   - 带挂起点的卡要把玩家的选择交回去 → {@link respondNow}
+// 三条都补在这里而不是每个卡测试文件里各写一遍。
+//
+// ⚠ 走的**不是** `play_card` 意图：`rules/phase.ts` 的 `playCard` 目前只把牌搬上格，
+//   还没有"跑卡牌脚本"与"按卡表区分随从/法术"这两件事（那个文件头点名说了接入点在哪）。
+//   所以本函数与 {@link runActs} 一样，是**绕开意图层直驱结算管线**：
+//   它跑的就是 handler 表与求值器，卡的效果对不对由这条路径如实反映。
+//   相位机接上脚本之后，本函数应当改成 `apply({t:"play_card"})` 的薄封装。
+
+/**
+ * 卡表里的一张卡 → 摆盘用的 {@link Face}。
+ *
+ * `putUnit(state, 0, 0, cardFace(PF1_G03))` = 把这张卡**按它自己的卡面**摆上场，
+ * 于是单卡测试里不会出现第二份手抄的攻血数字（抄错了断言照样绿，那正是最坏的情形）。
+ *
+ * 逐项判 `undefined` 而不是整份摊开：`tsconfig` 开了 `exactOptionalPropertyTypes`，
+ * 一个显式的 `undefined` 与"这个键不存在"是两件事；而 `Face` 的语义是**缺省项保持原值**。
+ */
+export function cardFace(card: Card): Face {
+  const tags = card.data.tags ?? {};
+  const face: { atk?: number; health?: number; cost?: number; direction?: number } = {};
+  if (tags.atk !== undefined) {
+    face.atk = tags.atk;
+  }
+  if (tags.health !== undefined) {
+    face.health = tags.health;
+  }
+  if (card.data.cost !== undefined) {
+    face.cost = card.data.cost;
+  }
+  if (tags.direction !== undefined) {
+    face.direction = tags.direction;
+  }
+  return face;
+}
+
+/** {@link castCard} 的可选项，全部有缺省值。 */
+export interface CastOptions {
+  /** 打出方，缺省 p0。 */
+  readonly player?: PlayerId;
+  /** 绑定 `sel.target` —— 即 `script.target` 那个目标域里被选中的那一个。缺省不绑。 */
+  readonly target?: EntityId;
+  /** 接线，缺省 {@link DEFAULT_DEPS}。要卡表 / 附魔表的卡（`act.summon` / `act.buff`）自己传。 */
+  readonly deps?: ResolveDeps;
+}
+
+/**
+ * 打出**卡表里的一张牌**：把它变成 `player` 手里的一个实体，然后跑它的 `script.play`。
+ *
+ * 三步，每一步都对应真实打牌流程里的一件事：
+ * 1. 取该方**牌库顶**那张牌当载体（与 {@link putUnit} 同一条取牌规矩，配 `shuffle:false`
+ *    可预测），把它的 `cardId` 与卡面数字改写成这张卡 —— `createGame` 造牌时还没有卡表，
+ *    卡面本来就得由外面填（见文件头 `setFace` 那一节）；
+ * 2. 搬进手牌：法术是**从手上**打出的，`sel.zone(friendly,"hand")` 一类的写法才成立；
+ * 3. 用 `{self, target}` 的上下文把 `script.play` 压栈并结算一次。
+ *
+ * 返回的 `state` 可能停在**挂起点**上（卡里有 `act.select_target`），
+ * 这时接着调 {@link respondNow} 把选择交回去。
+ *
+ * ⚠ 只跑 `play` 段，**不把随从放上场**：净水随从的"打出"就是上场，那件事请用
+ *   {@link putUnit}（它落在与真实上场同一条 `placeOnSlot` 上）。
+ */
+export function castCard(state: GameState, card: Card, options: CastOptions = {}): Step {
+  const player = options.player ?? 0;
+  const draft = cloneState(state);
+  const self = deckTop(draft, player);
+  const entity = setFace(draft, self, cardFace(card));
+  entity.cardId = card.id;
+  putInHand(draft, player, self);
+
+  // `?? null` 不能省：`CtxBindings` 的字段一律「必填 + `| null`」（`state/stack.ts`），
+  // 而 `withCtx` 是对象展开 —— 展进一个 `undefined` 会把 `target` 这个**键**留成 undefined，
+  // 一序列化就丢键，架构 §6.1 第二条测试（往返逐字相等）当场失真。
+  const ctx = withCtx(createCtx(self), { target: options.target ?? null });
+  pushActs(draft, card.script.play ?? [], ctx);
+  const events = resolve(draft, options.deps ?? DEFAULT_DEPS);
+  draft.seq += 1;
+  return { state: draft, events };
+}
+
+/**
+ * 回应一个挂起点：把玩家的选择交回去，结算从栈顶继续（框架 §4.2 / IR v1 §6.1）。
+ *
+ * 走的是**正规入口** `apply({t:"respond"})` 而不是直接调 `resume()` ——
+ * 于是"挂起点横跨相位边界"那一段（`rules/apply.ts` 的 `applyRespond` 之后还要再推一次
+ * 自动相位）也被测试覆盖到，而不是只测了结算栈那一半。
+ *
+ * `player` 从 `state.pendingInput` 上取：该谁选择是引擎说了算的，让调用方再填一遍
+ * 只会多一个能填错的地方（填错了 `apply` 回的是 `wrong_player`，与"选择不合法"混淆）。
+ * `chosen` 传 `null` = 放弃，仅当挂起点 `optional` 时合法。
+ */
+export function respondNow(
+  state: GameState,
+  chosen: EntityId | CardId | null,
+  deps: ResolveDeps = DEFAULT_DEPS,
+): Step {
+  const request = state.pendingInput;
+  if (request === null) {
+    throw new Error("夹具错误：当前状态没有挂起点，respondNow 无从回应");
+  }
+  return expectOk(apply(state, { t: "respond", player: request.player, chosen }, deps));
 }

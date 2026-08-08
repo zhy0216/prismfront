@@ -14,6 +14,7 @@
 import { expect, test } from "bun:test";
 import type { Act, RulesConfig } from "@prismfront/ir";
 import { emitEvent } from "../../events/index.ts";
+import { NO_DEPS, NO_HANDLERS } from "../../handlers/index.ts";
 import { createRngState } from "../../rng/index.ts";
 import type { CtxBindings, EntityData, GameState, PlayerId } from "../../state/index.ts";
 import {
@@ -37,7 +38,6 @@ import {
   InvalidChoiceError,
   isCancelled,
   MAX_RESOLUTION_DEPTH,
-  NO_DEPS,
   NotSuspendedError,
   processDeaths,
   pushAct,
@@ -132,18 +132,19 @@ function hitAct(amount: number): Act {
 function tracingDeps(): { deps: ResolveDeps; trace: string[] } {
   const trace: string[] = [];
   const handlers: HandlerTable = {
+    ...NO_HANDLERS,
     "act.nothing": () => {
       trace.push("nothing");
     },
-    "act.hit": (state, ctx, act) => {
+    "act.hit": (env, act) => {
       const amount = typeof act.amount === "number" ? act.amount : 0;
       trace.push(`hit:${amount}`);
-      const target = ctx.target === null ? undefined : getEntity(state, ctx.target);
+      const target = env.ctx.target === null ? undefined : getEntity(env.state, env.ctx.target);
       if (target === undefined) {
         return;
       }
       target.damage += amount;
-      emitEvent(state, { name: "damaged", source: ctx.self, target: target.id, amount });
+      emitEvent(env.state, { name: "damaged", source: env.ctx.self, target: target.id, amount });
     },
   };
   return { deps: { handlers }, trace };
@@ -151,18 +152,19 @@ function tracingDeps(): { deps: ResolveDeps; trace: string[] } {
 
 /** 互相出手一次的临时 handler：`self` 与 `ctx.target` 同时挨打 —— 用来验"同归于尽"。 */
 const MUTUAL_STRIKE: HandlerTable = {
-  "act.strike": (state, ctx) => {
-    const attacker = getEntity(state, ctx.self);
-    const target = ctx.target === null ? undefined : getEntity(state, ctx.target);
+  ...NO_HANDLERS,
+  "act.strike": (env) => {
+    const attacker = getEntity(env.state, env.ctx.self);
+    const target = env.ctx.target === null ? undefined : getEntity(env.state, env.ctx.target);
     if (attacker === undefined || target === undefined) {
       return;
     }
     const out = attacker.tags.atk;
     const back = target.tags.atk;
     target.damage += out;
-    emitEvent(state, { name: "struck", source: attacker.id, target: target.id, amount: out });
+    emitEvent(env.state, { name: "struck", source: attacker.id, target: target.id, amount: out });
     attacker.damage += back;
-    emitEvent(state, { name: "struck", source: target.id, target: attacker.id, amount: back });
+    emitEvent(env.state, { name: "struck", source: target.id, target: attacker.id, amount: back });
   },
 };
 
@@ -206,11 +208,12 @@ test("Act[] 按数组下标升序执行（栈是 LIFO，反转只在 push.ts 里
   expect(trace).toEqual(["hit:1", "hit:2", "hit:3"]);
 });
 
-test("未注册的 op 静默跳过：不抛错，流水线继续", () => {
+test("静默跳过的 op 不打断流水线：前后两条照跑", () => {
   const state = freshState();
   const { deps, trace } = tracingDeps();
 
-  // act.silence 没有 handler，夹在两个有 handler 的动作中间。
+  // act.silence 在这张表里是静默跳过的（M4 起表是完整的，占位与真 handler 都在表里），
+  // 它夹在两个有副作用的动作中间。
   pushActs(
     state,
     [hitAct(1), { op: "act.silence", target: { op: "sel.self" } }, hitAct(2)],
@@ -220,7 +223,9 @@ test("未注册的 op 静默跳过：不抛错，流水线继续", () => {
 
   expect(trace).toEqual(["hit:1", "hit:2"]);
   expect(events).toHaveLength(0); // 没有目标，两次 hit 都没发事件
-  expect(runHandler(state, createCtx(0), { op: "act.nothing" }, {})).toBe(false);
+  // ★ 表收紧成 `Record<ActOp, …>` 之后 `runHandler` 只在**无效槽**时回 false，
+  //   「表里漏了一项」已经是编译错误而不是运行期的一条 false（见 `deps.ts`）。
+  expect(runHandler(state, createCtx(0), { op: "act.nothing" }, NO_DEPS)).toBe(true);
 });
 
 test("展不开的脚本引用静默跳过（M2 没有卡表，expandScript 缺省）", () => {
@@ -273,9 +278,10 @@ test("pushPendingInOrder：给的是执行顺序，入栈时由 push.ts 做那�
 test("步数超过 MAX_RESOLUTION_DEPTH → ResolutionLoopError，抛错前已排空事件日志", () => {
   const state = freshState();
   const handlers: HandlerTable = {
-    "act.nothing": (s, ctx) => {
-      emitEvent(s, { name: "player_passed", player: 0 });
-      pushAct(s, { op: "act.nothing" }, ctx); // 自我复制 = 真环
+    ...NO_HANDLERS,
+    "act.nothing": (env) => {
+      emitEvent(env.state, { name: "player_passed", player: 0 });
+      pushAct(env.state, { op: "act.nothing" }, env.ctx); // 自我复制 = 真环
     },
   };
   pushAct(state, { op: "act.nothing" }, createCtx(0));
@@ -559,9 +565,10 @@ test("★ winner 进来时就非空 ⇒ resolve 一条都不弹（判断在 pop 
 
 /** 挂起类动作的 handler 契约：**先把续跑动作压回栈，再 suspend**（见 suspend.ts 文件头）。 */
 const DISCOVER_THEN_HIT: HandlerTable = {
-  "act.discover": (state, ctx) => {
-    pushAct(state, hitAct(4), ctx);
-    suspend(state, {
+  ...NO_HANDLERS,
+  "act.discover": (env) => {
+    pushAct(env.state, hitAct(4), env.ctx);
+    suspend(env.state, {
       player: 0,
       kind: "discover",
       options: [101, 102],
@@ -569,16 +576,16 @@ const DISCOVER_THEN_HIT: HandlerTable = {
       deadline: null,
     });
   },
-  "act.hit": (state, ctx, act) => {
+  "act.hit": (env, act) => {
     const amount = typeof act.amount === "number" ? act.amount : 0;
-    const target = ctx.target === null ? undefined : getEntity(state, ctx.target);
+    const target = env.ctx.target === null ? undefined : getEntity(env.state, env.ctx.target);
     if (target === undefined) {
       return;
     }
     target.damage += amount;
-    emitEvent(state, {
+    emitEvent(env.state, {
       name: "damaged",
-      source: typeof ctx.chosen === "number" ? ctx.chosen : null,
+      source: typeof env.ctx.chosen === "number" ? env.ctx.chosen : null,
       target: target.id,
       amount,
     });

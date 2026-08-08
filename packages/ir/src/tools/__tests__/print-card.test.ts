@@ -234,6 +234,8 @@ const COND_SAMPLES: Record<CondOp, Cond> = {
   "cond.has_tag": { op: "cond.has_tag", of: SELF, tag: "armor", value: 28 },
   "cond.has_flag": { op: "cond.has_flag", of: SELF, flag: "divine_shield" },
   "cond.is_kind": { op: "cond.is_kind", of: SELF, kind: ["weapon", "hero_power"] },
+  // 色表形式（存在量化）刻意不走 IsRed / IsBlue 别名，别名形式由 §10.5 的用例覆盖
+  "cond.has_color": { op: "cond.has_color", of: SELF, color: ["red", "blue"] },
   "cond.has_tribe": { op: "cond.has_tribe", of: IT, tribe: "beast" },
   "cond.in_zone": { op: "cond.in_zone", of: SELF, zone: "graveyard" },
   "cond.dead": { op: "cond.dead", of: SELF },
@@ -467,9 +469,10 @@ describe("IR §10 的例子 —— v1 基座那一半糖", () => {
     expect(text).toContain("Draw(CONTROLLER),");
   });
 
-  test("§10.5 发现：Discover 的默认 show/pick 省掉，card.of 打成 CardOf", () => {
+  test("§10.5 发现：Discover 的默认 show/pick 省掉，card.of 打成 CardOf，颜色打成 IsBlue()", () => {
+    // `.and()` 是摊平型链式方法，按 names.ts 的还原策略打成变参 `And(...)`（不还原成链式）
     expect(printActs(CORE_050_PLAY, rootContext())).toBe(
-      "[Discover(CardPool(IsSpell())), Give(CONTROLLER, CardOf(CHOSEN))]",
+      "[Discover(CardPool(And(IsSpell(), IsBlue()))), Give(CONTROLLER, CardOf(CHOSEN))]",
     );
   });
 

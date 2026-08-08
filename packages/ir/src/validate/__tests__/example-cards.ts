@@ -1,16 +1,17 @@
-// 校验器的正例语料：规范里手写的示例卡，逐张写成 2.1.0 的规范形式 IR。
+// 校验器的正例语料：规范里手写的示例卡，逐张写成今天（`IR_VERSION`）的规范形式 IR。
 //
 // 两组共 12 张：
 //   - v2 §8.1-8.6 的六张格子战斗示例卡（GRID_001…GRID_006）—— M1 完成标志点名的那六张
-//   - IR v1 §10.1-10.6 的六个示例（CORE_*）—— 老规范的表达力，按 2.1.0 迁移后仍须成立
+//   - IR v1 §10.1-10.6 的六个示例（CORE_*）—— 老规范的表达力，迁到今天的规范后仍须成立
 //
 // 全部标注成 T1 的 `Card` / `Enchantment` / `Bundle`：**类型说它们合法，校验器也必须说合法**。
 // 这就是这组语料的意义 —— 校验器与权威类型对同一份数据的判断不许分叉。
 //
-// 迁移到 2.1.0 时按规范做的三处调整（每处都在对应卡上留了注释）：
+// 从 v1 迁到今天的规范时按规范做的三处调整（每处都在对应卡上留了注释）：
 //   1. `zone: "hero"` → `"base"`（架构 §10 第 3 项）
 //   2. `act.summon` 的 `at` 在规范形式里必填，旧卡补 `slot.random_empty`（v2 §3.4 / §10 第 3 条）
-//   3. v1 的 `HasFaction("mage")` 无对应物（v2.1 §11.4 faction 已废）→ 发现示例只留 `is_kind`
+//   3. v1 的 `HasFaction("mage")`（v2.1 §11.4 faction 已废）→ 发现示例改用 `cond.has_color`
+//      筛蓝色（决策 #9 在 2.2.0 补的 op，《数值基准》§1.1：蓝 = 魔法）
 //
 // 这不是 builder 的产物 —— builder 是 T3/T4 的活。这里手写，正是为了让校验器独立于 builder 成立。
 
@@ -300,8 +301,8 @@ export const CORE_040: Card = {
 
 /**
  * IR v1 §10.5 发现 —— 挂起点。
- * v1 的 `HasFaction("mage")` 在 2.1.0 没有对应物（`data.faction` 已被 `colors` 取代，
- * v2.1 §11.4），所以卡池条件只留 `is_kind`。
+ * v1 的 `HasFaction("mage")`：`data.faction` 已被 `colors` 取代（v2.1 §11.4），
+ * 2.2.0 起用 `cond.has_color` 筛颜色（决策 #9），所以卡池条件是 `is_kind` + `has_color` 两句。
  */
 export const CORE_050: Card = {
   id: "CORE_050",
@@ -318,7 +319,13 @@ export const CORE_050: Card = {
         op: "act.discover",
         from: {
           op: "card.pool",
-          filter: { op: "cond.is_kind", of: { op: "sel.it" }, kind: "spell" },
+          filter: {
+            op: "cond.and",
+            of: [
+              { op: "cond.is_kind", of: { op: "sel.it" }, kind: "spell" },
+              { op: "cond.has_color", of: { op: "sel.it" }, color: "blue" },
+            ],
+          },
         },
         show: 3,
         pick: 1,

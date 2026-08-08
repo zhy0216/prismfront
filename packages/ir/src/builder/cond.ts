@@ -7,6 +7,7 @@
 
 import type {
   CardKind,
+  Color,
   Cond,
   CondNode,
   FlagName,
@@ -170,6 +171,35 @@ export function IsHero(of: Sel = IT): FluentCond {
 /** 衍生物。 */
 export function IsToken(of: Sel = IT): FluentCond {
   return IsKind(of, "token");
+}
+
+/**
+ * `cond.has_color`（决策 #9，irVersion 2.2.0 新增）：按颜色筛卡。
+ *
+ * 这就是 IR §3.3 惯例要的那颗糖 —— **调用方不必自己拼量化**：
+ * `of` 上是全称量化（空集 → `true`，与 `cond.has_*` 家族一致），
+ * `color` 给数组时是**存在量化**（命中其一即可），两层量化都在 op 内部。
+ * 要"存在一张红牌"仍然写 `Any(pool, IsRed())`，与 `HasTribe` 的用法完全一样。
+ *
+ * **融合卡两色都命中**：红蓝融合卡对 `IsRed()` 与 `IsBlue()` 同时为真（v2.1 §11.4）。
+ */
+export function HasColor(of: Sel, color: Color | readonly Color[]): FluentCond {
+  return condNode({ op: "cond.has_color", of, color });
+}
+
+/** `IsRed()`：红 = 进攻（《数值基准》§1.1）。省略参数时判的是迭代游标 `IT`（卡池里的候选卡）。 */
+export function IsRed(of: Sel = IT): FluentCond {
+  return HasColor(of, "red");
+}
+
+/** `IsBlue()`：蓝 = 魔法。IR §10.5 发现示例的 `HasFaction("mage")` 今天写作这个。 */
+export function IsBlue(of: Sel = IT): FluentCond {
+  return HasColor(of, "blue");
+}
+
+/** `IsGreen()`：绿 = 随从。 */
+export function IsGreen(of: Sel = IT): FluentCond {
+  return HasColor(of, "green");
 }
 
 /** `cond.has_tribe`。IR §10.3 野猪王：`HasTribe(IT, "beast")`。 */

@@ -95,6 +95,8 @@ export const COND_OP_SET = {
   "cond.has_tag": true,
   "cond.has_flag": true,
   "cond.is_kind": true,
+  // 2.2.0 新增（决策 #9）：按颜色筛卡池，v2.1 §11.4 废掉 faction 后留下的表达力缺口
+  "cond.has_color": true,
   "cond.has_tribe": true,
   "cond.in_zone": true,
   "cond.dead": true,

@@ -9,7 +9,19 @@
 #   这里按实测行为改成标量，偏离记在 R-M0-2。全局覆盖率达标不代表能过闸门：
 #   阈值卡的是**最低的那个文件**。
 
+# ⚠ 从根跑**子集**（`bun test packages/cards`，M4/E5 的完成标志之一）时，被依赖包的源文件
+#   会一起进覆盖率表：`cards` 在运行时真的调用 `@prismfront/ir` 的 `defineCard` / `validate`，
+#   于是 ir 的整棵 src 被加载，而其中绝大部分（printer、builder 的其余 op…）那次测试
+#   一行都碰不到 —— 逐文件闸门必红，与被测包自己的覆盖率无关。
+#   所以这里把 ir 排除掉。**不留缺口**：ir 的覆盖率由 `packages/ir/bunfig.toml` 在
+#   `bunx turbo test` 里逐文件把关（CI 走的正是那条路径）。
+#   将来再出现"被别的包在运行时依赖"的包，跟着往这个列表里加。
+#   同一件事在包级的写法见 `packages/cards/bunfig.toml`（那边 cwd 是包目录，写 `../ir/**`）。
+#   M4/E6 加了 `packages/engine/**`：单卡测试真的跑引擎（`@prismfront/engine/testkit`），
+#   engine 于是同样被整棵加载进覆盖率表；它的覆盖率由 `packages/engine/bunfig.toml` 把关。
+
 [test]
 preload = ["./test-setup.ts"]
 coverage = true
 coverageThreshold = 0.8
+coveragePathIgnorePatterns = ["packages/ir/**", "packages/engine/**"]

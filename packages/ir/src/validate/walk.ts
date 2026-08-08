@@ -28,11 +28,27 @@ export const MAX_WALK_DEPTH = 256;
 export interface WalkContext {
   readonly layers: ReadonlySet<ValidationLayer>;
   readonly issues: ValidationIssue[];
+  /**
+   * 每走到一个 **op 已知**的节点回调一次（同一个 op 出现几次就回调几次）。
+   *
+   * 存在的理由只有一个：`bundle.opsUsed`（IR §2.1）需要"扫一遍整份 IR 收集用到的 op"，
+   * 而那正是本文件已经在做的事。给一个回调口，全仓就只有**这一份**遍历 ——
+   * op 集每次增长（如 2.2.0 的 `cond.has_color`）时不会有第二份遍历悄悄漏掉分支。
+   * 收集器见 `ops-used.ts`。
+   */
+  readonly onNode: (op: NodeOp) => void;
 }
 
-export const createContext = (layers: readonly ValidationLayer[]): WalkContext => ({
+/** 不收集 op 时的回调。校验路径上每个节点都会调它一次，所以要保持空实现。 */
+const IGNORE_NODE = (): void => {};
+
+export const createContext = (
+  layers: readonly ValidationLayer[],
+  onNode: (op: NodeOp) => void = IGNORE_NODE,
+): WalkContext => ({
   layers: new Set(layers),
   issues: [],
+  onNode,
 });
 
 interface PushInput {
@@ -197,6 +213,8 @@ export function checkKind(
         });
         return;
       }
+      // ★ op 已知才回调：`opsUsed` 是 `NodeOp[]`，未知 op 只配进 issue 列表。
+      ctx.onNode(op as NodeOp);
       // ★ L2 的全部内容：这个位置接受哪一族前缀，核对一下就完了。
       if (!(spec.ops as readonly string[]).includes(op)) {
         push(ctx, {

@@ -28,7 +28,7 @@
 
 import { expect, test } from "bun:test";
 import type { EntityId } from "@prismfront/ir";
-import { hitHandler, M2_DEPS, M2_HANDLERS, placeOnSlot } from "../../handlers/index.ts";
+import { ACT_HANDLERS, DEFAULT_DEPS, hitHandler, placeOnSlot } from "../../handlers/index.ts";
 import type { ResolveDeps } from "../../resolve/index.ts";
 import { pushAct, ResolutionLoopError, refreshAuras, suspend } from "../../resolve/index.ts";
 import type { GameState, PlayerId } from "../../state/index.ts";
@@ -149,14 +149,17 @@ test("双方 base 同一次战斗归零 → 平局（中途结算死亡会让它
 function summonOnFirstHit(reserve: EntityId, player: PlayerId, slot: number): ResolveDeps {
   return {
     handlers: {
-      ...M2_HANDLERS,
-      "act.hit": (state, ctx, act) => {
-        hitHandler(state, ctx, act);
-        const entity = getEntity(state, reserve);
+      ...ACT_HANDLERS,
+      // 包一层的 handler 要把**全部**参数转交给被包的那个，位置参数 `slots` 也不例外
+      // （`resolve/act-slots.ts`：`slots` 是惰性解析器，转交的是"怎么求"而不是求好的值；
+      //  自己另造一份就绕过了记忆化，`slot.random_empty` 会多抽一次随机）。
+      "act.hit": (env, act, slots) => {
+        hitHandler(env, act, slots);
+        const entity = getEntity(env.state, reserve);
         // 只在第一次生效：上场之后它就不在手牌区了（判据是状态，不是闭包里的计数器 ——
         // handler 必须是状态的纯函数，否则 clone 出来的推演会串味）。
         if (entity !== undefined && entity.zone === zoneKey(player, "hand")) {
-          placeOnSlot(state, entity, player, slot);
+          placeOnSlot(env.state, entity, player, slot);
         }
       },
     },
@@ -423,7 +426,7 @@ test("战斗出手内部走 act.hit 管线（拦得住 act.hit 就拦得住战�
   const state = openGame();
   const attacker = putUnit(state, 0, 0, { atk: 4, health: 9 });
   const target = putUnit(state, 1, 0, { atk: 0, health: 9 });
-  const shielded: ResolveDeps = { handlers: { ...M2_HANDLERS, "act.hit": () => {} } };
+  const shielded: ResolveDeps = { handlers: { ...ACT_HANDLERS, "act.hit": () => {} } };
 
   const combat = fightOnce(state, shielded);
 
@@ -440,9 +443,9 @@ test("战斗链条成环同样撞 ResolutionLoopError（步数上限与 resolve(
   putUnit(state, 0, 0, { atk: 1, health: 9 });
   const looping: ResolveDeps = {
     handlers: {
-      ...M2_HANDLERS,
-      "act.hit": (draft, ctx, act) => {
-        pushAct(draft, act, ctx); // 自我复制 = 真环
+      ...ACT_HANDLERS,
+      "act.hit": (env, act) => {
+        pushAct(env.state, act, env.ctx); // 自我复制 = 真环
       },
     },
   };
@@ -505,7 +508,7 @@ test("★ 触发器只入栈不结算：批次中途排出来的触发器要等�
   state.phase = "combat"; // ②③④ 是 combat 相位里的三步（`phase.ts` 的 runCombat）
 
   // 直接驱动 ②③④：第 ① 步（把栈跑空）与第 ⑤ 步（combat_ended）与本条无关。
-  const events = resolveStrikes(state, M2_DEPS, drawOnDamaged(first));
+  const events = resolveStrikes(state, DEFAULT_DEPS, drawOnDamaged(first));
 
   // ★ 两条 `card_drawn` 必须**全部排在两击之后**：第 ③ 步只把它们压上主栈，
   //   要到第 ④ 步开闸才跑。把 `harvest` 挪到排队之后（= 批次中途就跑触发器）会得到
@@ -535,7 +538,7 @@ test("★ 第 ④ 步给结算栈开闸：留在主栈上的条目到这里才�
   // 这条**不走** `TriggerQueue` 接线，于是"开闸"这件事有一道独立于那个接线的防线。
   pushAct(state, { op: "act.draw", player: { op: "sel.controller" } }, createCtx(attacker));
 
-  const events = resolveStrikes(state, M2_DEPS);
+  const events = resolveStrikes(state, DEFAULT_DEPS);
 
   // ★ 第 ③ 步不许碰它（它在每一步的 `floor` 之下，`harvest` 摘不到），
   //   第 ④ 步的那次 `resolve()` 必须把它跑掉 —— 删掉那一行，`card_drawn` 就没了，
@@ -581,7 +584,7 @@ test("★ 第 ① 步就打穿 base ⇒ ②③④ 一步都不许跑（终局之
   const p1Base = baseIdOf(state, 1);
   enterCombatWithTrigger(state, owner, p1Base, baseHp);
 
-  const events = runCombat(state, M2_DEPS);
+  const events = runCombat(state, DEFAULT_DEPS);
 
   expect(state.winner).toBe(0);
   expect(state.phase).toBe("over");
@@ -601,11 +604,11 @@ test("★ 第 ① 步挂起 ⇒ 同样不开始快照（战斗批次是原子的
   //（`resolve/suspend.ts`）。
   const asking: ResolveDeps = {
     handlers: {
-      ...M2_HANDLERS,
-      "act.hit": (draft, ctx, act) => {
-        if (ctx.chosen === null) {
-          pushAct(draft, act, ctx);
-          suspend(draft, {
+      ...ACT_HANDLERS,
+      "act.hit": (env, act, slots) => {
+        if (env.ctx.chosen === null) {
+          pushAct(env.state, act, env.ctx);
+          suspend(env.state, {
             player: 0,
             kind: "select_target",
             options: [p1Base],
@@ -614,7 +617,7 @@ test("★ 第 ① 步挂起 ⇒ 同样不开始快照（战斗批次是原子的
           });
           return;
         }
-        hitHandler(draft, ctx, act);
+        hitHandler(env, act, slots);
       },
     },
   };
@@ -646,15 +649,15 @@ test("★ 第 ① 步挂起 ⇒ 同样不开始快照（战斗批次是原子的
 function boostAtkOnFirstHit(attacker: EntityId, atk: number): ResolveDeps {
   return {
     handlers: {
-      ...M2_HANDLERS,
-      "act.hit": (state, ctx, act) => {
-        hitHandler(state, ctx, act);
-        const entity = getEntity(state, attacker);
+      ...ACT_HANDLERS,
+      "act.hit": (env, act, slots) => {
+        hitHandler(env, act, slots);
+        const entity = getEntity(env.state, attacker);
         if (entity === undefined || entity.base.atk === atk) {
           return;
         }
         entity.base.atk = atk;
-        refreshAuras(state);
+        refreshAuras(env.state);
       },
     },
   };

@@ -465,7 +465,7 @@ function applyStrikes(
 
       // ③ 执行，产出事件
       const mark = state.eventLog.length;
-      runHandler(state, ctx, action, deps.handlers);
+      runHandler(state, ctx, action, deps);
       harvest(state, floor, chain);
 
       // ④ 事后触发：★ 只入栈不结算 —— 压在主栈上，留给第 ④ 步开闸

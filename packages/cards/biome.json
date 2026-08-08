@@ -8,7 +8,10 @@
           "level": "error",
           "options": {
             "deniedGlobals": {
-              "Bun": "架构 §2.2 禁令 5：packages/* 必须运行时中立，不得使用 Bun.* 全局。Bun 只出现在 apps/*。"
+              "Bun": "架构 §2.2 禁令 5：packages/* 必须运行时中立，不得使用 Bun.* 全局。Bun 只出现在 apps/*。",
+              "Date": "IR §1 原则 1：ir:build 必须是**确定性构建** —— 同一份源永远产出同一份 JSON。createdAt 唯一的合法来源是 resolveCreatedAt(SOURCE_DATE_EPOCH)，读时钟会让产物每次都不同，M8 的 golden replay 与 turbo 缓存一起失效。",
+              "console": "架构 §5.1：src/ 是纯函数（卡表 → bundle），诊断信息靠返回值与异常。打印只发生在 scripts/ 的构建入口（下面的 overrides 放行）。",
+              "process": "架构 §5.1：src/ 不读环境变量、不定退出码。SOURCE_DATE_EPOCH 这类宿主输入由 scripts/ 取好再当参数传进来（见 resolveCreatedAt）。"
             }
           }
         },
@@ -49,6 +52,24 @@
                     "message": "架构 §2.2 禁令 2：ir / engine / cards 等 packages/* 不得依赖 colyseus、phaser 或任何 I/O 库。turbo boundaries 的 tag deny 只对 workspace 内部包生效，外部 npm 包必须由这条 lint 兜底。"
                   }
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "Bun": "架构 §2.2 禁令 5：连构建脚本也不许用 Bun.* —— packages/* 要能在 bun 与 node 下都跑。写文件走 node:fs（见 scripts/build-host.d.ts 的说明）。",
+                  "Date": "★ 确定性构建的**机器守卫**（IR §1 原则 1）。scripts/ 放行了 console 与 process，但**不放行时钟**：createdAt 唯一的合法来源是 resolveCreatedAt(process.env.SOURCE_DATE_EPOCH)。把它改成 new Date() 时纯函数层的测试一条都不会红（实测过：46 条全绿），而两次 ir:build 的产物已经不同 —— 所以这条防线只能由 lint 来站。"
+                }
               }
             }
           }

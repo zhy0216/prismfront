@@ -139,6 +139,7 @@ export const COND_SCHEMAS = {
   "cond.has_tag": { of: "sel", tag: "tagKey", value: "?num" },
   "cond.has_flag": { of: "sel", flag: "flag" },
   "cond.is_kind": { of: "sel", kind: "cardKindOrKinds" },
+  "cond.has_color": { of: "sel", color: "colorOrColors" },
   "cond.has_tribe": { of: "sel", tribe: "tribe" },
   "cond.in_zone": { of: "sel", zone: "zone" },
   "cond.dead": { of: "sel" },

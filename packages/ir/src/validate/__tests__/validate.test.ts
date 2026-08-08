@@ -71,7 +71,7 @@ describe("正例：规范示例卡的 IR 通过 L1 + L2", () => {
   }
 
   for (const card of V1_EXAMPLE_CARDS) {
-    test(`IR v1 §10 ${card.id} ${card.data.name.zh}（已迁移到 2.1.0）`, () => {
+    test(`IR v1 §10 ${card.id} ${card.data.name.zh}（已迁移到今天的规范）`, () => {
       expectClean(validateCard(card));
     });
   }

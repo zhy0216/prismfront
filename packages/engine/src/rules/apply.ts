@@ -40,7 +40,7 @@
 // 的 id 现造。翻译本身在 `phase.ts`，本文件只负责校验与外壳。
 
 import type { GameEvent } from "../events/index.ts";
-import { M2_DEPS } from "../handlers/index.ts";
+import { DEFAULT_DEPS } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
 import { InvalidChoiceError, resolve, resume } from "../resolve/index.ts";
 import type { EntityData, GameState, PlayerId } from "../state/index.ts";
@@ -75,13 +75,17 @@ function isPlayerId(value: unknown): value is PlayerId {
  * 一整段（见 `phase.ts` 的「自动相位」），这正是相位机把"没人需要做决策的那几步"
  * 一口气跑完的结果。
  *
- * @param deps handler 表与脚本展开器。缺省是 M2 的临时表 {@link M2_DEPS}；
- *             M4 换成求值器提供的真表。测试可以注入自己的表来隔离流水线。
+ * @param deps handler 表与脚本展开器。缺省是求值器提供的完整表 {@link DEFAULT_DEPS}（30 个 op 一个不少）。
+ *             测试可以注入自己的表来隔离流水线。
  * @throws ResolutionLoopError 结算栈成环（框架 §4.1）。**不捕获**：那不是"非法意图"，
  *         而是卡牌数据或引擎自身的 bug，吞掉它只会让房间带着一份坏状态继续跑。
  *         协议层（M9）撞上它应当丢弃这份状态并从上一个快照恢复。
  */
-export function apply(state: GameState, intent: Intent, deps: ResolveDeps = M2_DEPS): ApplyResult {
+export function apply(
+  state: GameState,
+  intent: Intent,
+  deps: ResolveDeps = DEFAULT_DEPS,
+): ApplyResult {
   if (state.winner !== null) {
     return { ok: false, code: "game_over" };
   }

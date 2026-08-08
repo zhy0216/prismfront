@@ -49,7 +49,7 @@
 import { expect, test } from "bun:test";
 import type { CardId, EntityId } from "@prismfront/ir";
 import type { GameEvent } from "../events/index.ts";
-import { M2_HANDLERS } from "../handlers/index.ts";
+import { ACT_HANDLERS } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
 import { pushAct, suspend } from "../resolve/index.ts";
 import type { Intent, RunMatchOptions } from "../rules/index.ts";
@@ -742,10 +742,10 @@ test("反例自检：BigInt 与循环引用让往返探针直接抛错（更响�
  */
 const SUSPENDING_DEPS: ResolveDeps = {
   handlers: {
-    ...M2_HANDLERS,
-    "act.move": (state, ctx) => {
-      pushAct(state, { op: "act.hit", target: { op: "sel.chosen" }, amount: 6 }, ctx);
-      suspend(state, {
+    ...ACT_HANDLERS,
+    "act.move": (env) => {
+      pushAct(env.state, { op: "act.hit", target: { op: "sel.chosen" }, amount: 6 }, env.ctx);
+      suspend(env.state, {
         player: 1,
         kind: "select_target",
         options: [P0_UNIT_B, P1_UNIT_B],

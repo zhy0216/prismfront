@@ -1,10 +1,11 @@
-// `act.strike` / `act.hit` —— 手动出手与伤害（走查第 3 步，死亡由第 ⑤ 步接手）。
+// 伤害与治疗、出手、直接消灭：`act.hit` / `act.heal` / `act.strike` / `act.destroy`。
 // 来源：v2 §3.4（`act.strike`：立即出手一次，`amount` = attacker **当前** atk，
-//       **内部走 `act.hit` 管线**，并发 `struck`）、IR v1 §3.4（`act.hit`）、
-//       v2 §5（`struck` / `damaged` 的负载）、`state/entity.ts`（血量记账）。
+//       **内部走 `act.hit` 管线**，并发 `struck`）、IR v1 §3.4（`act.hit` / `act.heal` /
+//       `act.destroy`）、v2 §5（`struck` / `damaged` / `healed` 的负载）、
+//       `state/entity.ts`（血量记账）、IR v1 §5.3 规则 1（动作内快照）。
 //
 // ═══════════════════════════════════════════════════════════════════════════
-// 两条必须守住的规矩
+// 三条必须守住的规矩
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. **伤害写 `entity.damage`，不动 `tags.health`**（`state/entity.ts` 的血量记账定案：
 //    `tags.health` 是生效血量上限，当前血量 = `tags.health - damage`）。
@@ -13,48 +14,85 @@
 // 2. **不在 handler 里判死**（`resolve/deps.ts` 的 handler 契约第 2 条）。
 //    死亡是流水线第 ⑤ 步的独立阶段（时序规则 3：批量、跑到不动点）。
 //    handler 只负责把 `damage` 加上去，`processDeaths` 会在同一步的末尾收走。
-//    ——「你只要让伤害能把 health 打到 <= 0」，剩下的是 `resolve/deaths.ts` 的事。
+//    —— `act.destroy` 也不例外，见 {@link destroyHandler}。
+// 3. ★ **目标只求值一次**（IR v1 §5.3 规则 1）：一律经 `targets.ts` 的 `snapshot`。
+//    「打第一个随从致死后，列表不会缩短，剩下的照打」就是这条的可观测形态。
 //
 // ⚠ 溅射 / 反伤走 `act.hit`，**不发 `struck`**（v2 §8.7：这是"反伤不会互相触发成
 //   无限连锁"的全部机制）。别顺手在 {@link hitHandler} 里补发 `struck`。
 
+import { evalNum } from "../eval/index.ts";
 import { emitEvent } from "../events/index.ts";
 import type { ActHandler } from "../resolve/index.ts";
 import { pushAct } from "../resolve/index.ts";
 import { withCtx } from "../state/index.ts";
-import { readEntity, readNum, sourceOf } from "./read.ts";
+import { frozenEntities, singleTarget, snapshot, sourceOf } from "./targets.ts";
 
 /**
- * `act.hit` 的 M2 临时 handler：造成伤害并发 `damaged`。
+ * `act.hit{target, amount, spellDamage?}` —— 造成伤害并逐个发 `damaged`。
  *
- * `target` 求值为空 → 静默跳过（IR v1 §5.2）。`amount <= 0` 同样什么都不做：
- * 「造成 0 点伤害」不是一件发生过的事，发一条 `amount: 0` 的 `damaged` 只会让
- * 「每当受到伤害」的触发器（M5）凭空触发。
+ * 求值顺序按签名声明顺序（IR v1 §5.4 规则 1）：**先 target 后 amount**，
+ * 且 `amount` 对整个动作只求一次 —— 打 5 个目标不是抽 5 次 `num.random`。
  *
- * M2 **不处理**的两件事，都要等有了它们各自的机制才有意义：
+ * 两处静默跳过（IR v1 §5.2）：
+ * - `target` 求值为空 → 整个动作跳过，**`amount` 连求都不求**
+ *   （"打空气"不该平白推进一次 RNG，见 `targets.ts` 的 `snapshot`）；
+ * - `amount <= 0` → 什么都不做：「造成 0 点伤害」不是一件发生过的事，
+ *   发一条 `amount: 0` 的 `damaged` 只会让"每当受到伤害"的触发器（M5）凭空触发。
+ *
+ * **不处理**的两件事，都要等它们各自的机制才有意义：
  * - `armor`（护甲减伤）—— 减伤的正确落点是拦截器（IR v1 §4.2），M5；
- * - `spellDamage`（法术伤害加成）—— 加成源要从卡表/光环里数，M4/M5。
+ * - `spellDamage`（法术伤害加成）—— 加成源要从光环里数（IR v1 §4.3），M5。
  */
-export const hitHandler: ActHandler<"act.hit"> = (state, ctx, act) => {
-  const target = readEntity(state, ctx, act.target);
-  if (target === undefined) {
+export const hitHandler: ActHandler<"act.hit"> = (env, act) => {
+  const targets = snapshot(env, act.target);
+  if (targets.length === 0) {
     return;
   }
-  const amount = readNum(act.amount, 0);
+  const amount = evalNum(env, act.amount);
   if (amount <= 0) {
     return;
   }
-  target.damage += amount;
-  emitEvent(state, {
-    name: "damaged",
-    source: sourceOf(state, ctx),
-    target: target.id,
-    amount,
-  });
+  const source = sourceOf(env);
+  for (const target of frozenEntities(env, targets)) {
+    target.damage += amount;
+    emitEvent(env.state, { name: "damaged", source, target: target.id, amount });
+  }
 };
 
 /**
- * `act.strike` 的 M2 临时 handler：发 `struck`，然后**把一条 `act.hit` 压栈**。
+ * `act.heal{target, amount}` —— 治疗，逐个发 `healed`。
+ *
+ * 治疗是**减 `damage` 且不越过 0**（`state/entity.ts` 的血量记账），不是加 `tags.health`：
+ * 加上限等于"+X/+X 的永久 buff"，那是 `act.buff` 的事。
+ *
+ * `healed.amount` 是**实际**回复量（`events/event.ts`：溢出部分不计），
+ * 于是治疗一个满血单位 `amount` 为 0 ⇒ **不发事件**（同 {@link hitHandler} 的 0 伤害）。
+ * 「过量治疗」在别的游戏里是可监听事件，这里没有对应的事件名（v2 §5 的 25 个里没有），
+ * 强行发一条 `amount: 0` 只会污染触发器。
+ */
+export const healHandler: ActHandler<"act.heal"> = (env, act) => {
+  const targets = snapshot(env, act.target);
+  if (targets.length === 0) {
+    return;
+  }
+  const amount = evalNum(env, act.amount);
+  if (amount <= 0) {
+    return;
+  }
+  const source = sourceOf(env);
+  for (const target of frozenEntities(env, targets)) {
+    const healed = Math.min(amount, target.damage);
+    if (healed <= 0) {
+      continue;
+    }
+    target.damage -= healed;
+    emitEvent(env.state, { name: "healed", source, target: target.id, amount: healed });
+  }
+};
+
+/**
+ * `act.strike{attacker, target}` —— 发 `struck`，然后**把一条 `act.hit` 压栈**。
  *
  * 为什么是压栈而不是就地调用 {@link hitHandler}：
  * - v2 §3.4 规定 strike **内部走 `act.hit` 管线**，目的是让拦截器（圣盾、减伤、
@@ -63,25 +101,54 @@ export const hitHandler: ActHandler<"act.hit"> = (state, ctx, act) => {
  * - 框架 §4.1 时序规则 2：连锁一律入栈。压栈之后 `damaged` 落在**下一次弹栈**，
  *   于是 `struck` 的触发器与 `damaged` 的触发器排队顺序天然正确。
  *
+ * `attacker` 与 `target` 都要求**恰好一个实体**（"立即出手一次"，v2 §3.4）：
+ * 非单实体一律静默跳过，判据与 `act.swap` 的"须各为单个在场单位"是同一条
+ * （见 `targets.ts` 的 `singleTarget`）。
+ *
  * `amount` 与 `target` 在这里就**冻结**成字面量与 `sel.entity`（IR v1 §5.6 运行时超集）：
  * 出手数值取的是**此刻**的 atk（v2 §3.4 / §4.2「快照后数值冻结」），
  * 压栈之后 attacker 掉 buff 或死亡都不该改变这一击。
  *
  * `atk <= 0` 这里**不特判**：v2 §4.2 的「`atk <= 0` → 不出手」是**战斗快照**的条件
- * （M3 的事），而 `act.strike` 是卡牌效果驱动的"立即出手一次"，它照常走一遍管线，
- * 只是 {@link hitHandler} 那一步不会产生伤害事件。
+ * （`rules/combat.ts`），而 `act.strike` 是卡牌效果驱动的"立即出手一次"，
+ * 它照常走一遍管线，只是 {@link hitHandler} 那一步不会产生伤害事件。
  */
-export const strikeHandler: ActHandler<"act.strike"> = (state, ctx, act) => {
-  const attacker = readEntity(state, ctx, act.attacker);
-  const target = readEntity(state, ctx, act.target);
+export const strikeHandler: ActHandler<"act.strike"> = (env, act) => {
+  const attacker = singleTarget(env, act.attacker);
+  const target = singleTarget(env, act.target);
   if (attacker === undefined || target === undefined) {
     return;
   }
   const amount = attacker.tags.atk;
-  emitEvent(state, { name: "struck", source: attacker.id, target: target.id, amount });
+  emitEvent(env.state, { name: "struck", source: attacker.id, target: target.id, amount });
   pushAct(
-    state,
+    env.state,
     { op: "act.hit", target: { op: "sel.entity", id: target.id }, amount },
-    withCtx(ctx, { self: attacker.id, target: target.id }),
+    withCtx(env.ctx, { self: attacker.id, target: target.id }),
   );
+};
+
+/**
+ * `act.destroy{target}` —— 直接消灭（IR v1 §3.4）。
+ *
+ * 实现是**把累计伤害顶到致死线**，而不是就地把实体搬进墓地：
+ * - 判死与移墓地是流水线第 ⑤ 步的独立阶段（时序规则 3），handler 抢着做会绕过
+ *   「批量 + 跑到不动点」，于是"同归于尽"与亡语连锁全部失真（`resolve/deaths.ts`）；
+ * - 顶到致死线之后，本步末尾的 `processDeaths` 会把它连同这一波其它致死单位一起收走，
+ *   `unit_died` 也由那里统一发 —— 于是"被消灭"与"被打死"在事件流里完全一致，
+ *   亡语不需要区分自己是怎么死的。
+ *
+ * **不发 `damaged`**：消灭不是伤害（v2 §5 没有"被消灭"这个事件名，
+ * 而借用 `damaged` 会让"每当受到伤害"的触发器与减伤拦截器误命中一次不存在的伤害）。
+ * 也因此圣盾挡不住 `act.destroy` —— 这与炉石的"直接消灭"一致，是有意的。
+ *
+ * 用 `Math.max` 而不是直接赋值：已经受过伤的单位不该被"治疗"回致死线以下，
+ * 而 `tags.health <= 0` 的实体本来就已致死，再减也没有意义。
+ * 只对**在场**的实体有可观测效果（`processDeaths` 只扫 `state.slots`），
+ * 手牌/牌库里的实体被 destroy 只会留下一身伤 —— 弃牌请用 `act.discard`（M5）。
+ */
+export const destroyHandler: ActHandler<"act.destroy"> = (env, act) => {
+  for (const target of frozenEntities(env, snapshot(env, act.target))) {
+    target.damage = Math.max(target.damage, target.tags.health);
+  }
 };

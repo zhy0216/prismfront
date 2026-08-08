@@ -13,7 +13,7 @@
 
 import { expect, test } from "bun:test";
 import type { CardId, RulesConfig } from "@prismfront/ir";
-import { M2_HANDLERS, moveHandler } from "../../handlers/index.ts";
+import { ACT_HANDLERS, moveHandler } from "../../handlers/index.ts";
 import type { HandlerTable, ResolveDeps } from "../../resolve/index.ts";
 import { pushAct, ResolutionLoopError, suspend } from "../../resolve/index.ts";
 import type { GameState } from "../../state/index.ts";
@@ -71,11 +71,14 @@ function boardState(): GameState {
  */
 function suspendingDeps(options: readonly number[]): ResolveDeps {
   const handlers: HandlerTable = {
-    ...M2_HANDLERS,
-    "act.move": (state, ctx, act) => {
-      if (ctx.chosen === null) {
-        pushAct(state, act, ctx);
-        suspend(state, {
+    ...ACT_HANDLERS,
+    // 包一层的 handler 要把**全部**参数转交给被包的那个，位置参数 `slots` 也不例外
+    // （`resolve/act-slots.ts`：`slots` 是惰性解析器，转交的是"怎么求"而不是求好的值；
+    //  自己另造一份就绕过了记忆化，`slot.random_empty` 会多抽一次随机）。
+    "act.move": (env, act, slots) => {
+      if (env.ctx.chosen === null) {
+        pushAct(env.state, act, env.ctx);
+        suspend(env.state, {
           player: 0,
           kind: "select_target",
           options,
@@ -84,7 +87,7 @@ function suspendingDeps(options: readonly number[]): ResolveDeps {
         });
         return;
       }
-      moveHandler(state, ctx, act);
+      moveHandler(env, act, slots);
     },
   };
   return { handlers };
@@ -195,9 +198,9 @@ test("apply 不吞 ResolutionLoopError：结算成环是引擎/卡牌的 bug，�
   const state = boardState();
   const card = nextCard(state);
   const handlers: HandlerTable = {
-    ...M2_HANDLERS,
-    "act.move": (s, ctx, act) => {
-      pushAct(s, act, ctx); // 自我复制 = 真环
+    ...ACT_HANDLERS,
+    "act.move": (env, act) => {
+      pushAct(env.state, act, env.ctx); // 自我复制 = 真环
     },
   };
 

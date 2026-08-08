@@ -7,6 +7,9 @@
 //
 // 零运行时依赖：不用 JSON Schema 库、不用 zod（包级 biome.json 直接拦截），
 // 整个校验器由 T1 的 TS 类型驱动 —— 见 schemas.ts 顶部对五种「编译不过」的说明。
+//
+// 这一次遍历还兼了一件不属于校验的事：`collectOps`（ops-used.ts）——
+// `bundle.opsUsed`（IR §2.1）要扫的正是同一棵树，见该文件的说明。
 
 export type {
   IssueCode,
@@ -45,6 +48,7 @@ export type {
   ValueOfKind,
 } from "./kinds.ts";
 export { isOptionalSpec, KIND_SPECS, kindOfSpec, specOf } from "./kinds.ts";
+export { collectOps } from "./ops-used.ts";
 export type { ObjectSchema, RuntimeObjectSchema } from "./schemas.ts";
 export {
   ACT_SCHEMAS,

@@ -13,7 +13,8 @@
 //    还原不可能有歧义，而可读性收益最大。
 // 2. **标量字段决定的别名还原**：`Push` / `Pull`（`act.shift.delta` 的正负字面量）、
 //    `Direction` / `SetDirection` / `ModDirection`（`tag === "direction"`）、
-//    `IsMinion` / `IsSpell` / `IsHero` / `IsToken`（`cond.is_kind.kind` 单值）。
+//    `IsMinion` / `IsSpell` / `IsHero` / `IsToken`（`cond.is_kind.kind` 单值）、
+//    `IsRed` / `IsBlue` / `IsGreen`（`cond.has_color.color` 单值）。
 //    别名由**单个节点的一个标量字段**唯一决定，是可逆重命名。
 // 3. **结构改写型的糖不还原**：`Any(of, cond)` = `Exists(Where(of, cond))`、
 //    `All` = `Not(Exists(Where(of, Not(c))))`、`AddToHand(p, sel)` = `Give(p, CardOf(sel))`。
@@ -26,6 +27,7 @@
 
 import type {
   CardKind,
+  Color,
   EventEntityField,
   EventName,
   GlobalTag,
@@ -164,6 +166,16 @@ export const KIND_PREDICATE_NAMES: Partial<Record<CardKind, string>> = {
   hero: "IsHero",
   token: "IsToken",
 };
+
+/**
+ * `cond.has_color` 单值时的谓词别名（builder/cond.ts，决策 #9）。
+ * 三色都有谓词，所以是全表而不是 `Partial`；给了色表（存在量化）时不还原，打成 `HasColor(of, [...])`。
+ */
+export const COLOR_PREDICATE_NAMES = {
+  red: "IsRed",
+  blue: "IsBlue",
+  green: "IsGreen",
+} as const satisfies Record<Color, string>;
 
 // ── 事件助手（v2 §5 事件表 + v2.1 §11.3）────────────────────────────────────
 

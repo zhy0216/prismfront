@@ -67,6 +67,7 @@ import {
   GainCrystalCap,
   Give,
   GlobalNum,
+  HasColor,
   HasFlag,
   HasTag,
   HasTribe,
@@ -74,10 +75,13 @@ import {
   Hit,
   Intersect,
   InZone,
+  IsBlue,
   IsDead,
+  IsGreen,
   IsHero,
   IsKind,
   IsMinion,
+  IsRed,
   IsSpell,
   IsToken,
   IT,
@@ -327,6 +331,7 @@ describe("op 覆盖完整性 —— 每个 op 都有构造器", () => {
     "cond.has_tag": HasTag(SELF, "atk", 3),
     "cond.has_flag": HasFlag(SELF, "divine_shield"),
     "cond.is_kind": IsKind(IT, "minion"),
+    "cond.has_color": HasColor(IT, ["red", "blue"]),
     "cond.has_tribe": HasTribe(IT, "beast"),
     "cond.in_zone": InZone(SELF, "graveyard"),
     "cond.dead": IsDead(SELF),
@@ -648,6 +653,11 @@ describe("具名常量（IR §3.1 对照表 + v2.1 §11.2 词汇分化）", () =
     expect(canonicalJson(IsMinion())).toBe(canonicalJson(IsKind(IT, "minion")));
     expect(canonicalJson(IsHero())).toBe(canonicalJson(IsKind(IT, "hero")));
     expect(canonicalJson(IsToken())).toBe(canonicalJson(IsKind(IT, "token")));
+    // 颜色谓词同款（决策 #9）：IsRed / IsBlue / IsGreen 就是单色的 HasColor
+    expect(canonicalJson(IsRed())).toBe(canonicalJson(HasColor(IT, "red")));
+    expect(canonicalJson(IsBlue())).toBe(canonicalJson(HasColor(IT, "blue")));
+    expect(canonicalJson(IsGreen())).toBe(canonicalJson(HasColor(IT, "green")));
+    expect(canonicalJson(IsRed(SELF))).toBe(canonicalJson(HasColor(SELF, "red")));
   });
 
   test("toActs 是公开的归一化入口", () => {

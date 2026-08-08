@@ -24,6 +24,8 @@ risk: normal
       **合并成一份 `irVersion: "2.1.0"` 的完整类型**。
       → 93 个 op（sel 21 / slot 6 / num 16 / cond 17 / card 3 / act 30）+ 25 个事件，
       全部逐个展开成可辨识联合，无 `/* v1 全部保留 */` 占位、无 string 兜底。
+      （[决策 #9](../决策待办.md) 的 `cond.has_color` 落地后 = **94 个 op**，
+      cond 变 18；那是 `irVersion` 2.2.0，不是 M1 交付的 2.1.0。）
 - [x] 顺手做掉架构文档 §10 的 6 项规范一致性清理：
   - [x] `irVersion` 定为 `2.1.0`
   - [x] `baseHp`（原 `heroHp`）

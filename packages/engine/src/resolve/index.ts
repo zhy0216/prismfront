@@ -13,6 +13,7 @@
 //   context.ts       ① bindContext        —— 取出栈条目的上下文
 //   interceptors.ts  ② applyInterceptors  —— 替换效果 / CANCELLED 哨兵      【M5 填】
 //   deps.ts          ③ handler 表与脚本展开器的注入点 + runHandler
+//   act-slots.ts     ③ 动作的 SlotRef 参数：惰性解析器（求值恰好一次）+ 无效槽静默跳过（v2 §3.1）
 //   triggers.ts      ④ queueTriggers      —— 排序（规则 1）与入栈（规则 2）【匹配 M5 填】
 //   deaths.ts        ⑤ processDeaths      —— 批量移墓地、跑到不动点、判胜负【M2 真实现】
 //   auras.ts         ⑥ refreshAuras       —— tags = base + Σ附魔 + Σ光环    【两个 Σ M5 填】
@@ -40,12 +41,20 @@
 //
 // 上层 `src/index.ts` 由外层统一组装，本目录不参与。
 
+export type {
+  ActSlotAccess,
+  ActSlotField,
+  ActSlots,
+  ErasedActSlots,
+  SlotResolver,
+} from "./act-slots.ts";
+export { isActSkipped, NO_ACT_SLOTS, resolveActSlots } from "./act-slots.ts";
 export { refreshAuras } from "./auras.ts";
 export { bindContext } from "./context.ts";
 export type { DeathReport } from "./deaths.ts";
 export { processDeaths } from "./deaths.ts";
 export type { ActHandler, HandlerTable, ResolveDeps, ScriptExpander } from "./deps.ts";
-export { actOfPending, NO_DEPS, NO_HANDLERS, runHandler } from "./deps.ts";
+export { actOfPending, runHandler } from "./deps.ts";
 export type { InterceptResult } from "./interceptors.ts";
 export { applyInterceptors, CANCELLED, isCancelled, MAX_INTERCEPT_CHAIN } from "./interceptors.ts";
 export {

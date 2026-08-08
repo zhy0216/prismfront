@@ -12,10 +12,11 @@
 // 2. **`act.summon.at` 现在必填**（v2 §3.4；builder 省略时补 `slot.random_empty(friendly)`，v2 §7）。
 //    §10.4 亡语里的 summon 没有 `at`，抄录时补上。
 // 3. **`data.faction` 已废弃**（v2.1 §11.4 → `data.colors`）。
-//    §10.5 的 `HasFaction("mage")` 编译成 `cond.has_tag(it, "faction_mage")`，
-//    而 `"faction_mage"` 不是 `TagKey`（T1 的权威类型只有 atk/health/cost/direction/armor），
-//    v2.1 也没有"按颜色筛卡"的 cond —— **这条子句今天无法表达**。
-//    因此 §10.5 只比对可表达的那一半（`IsSpell()`），并在测试里明说少了哪一段。
+//    §10.5 的 `HasFaction("mage")` 在 v1 编译成 `cond.has_tag(it, "faction_mage")`，
+//    而 `"faction_mage"` 不是 `TagKey`（T1 的权威类型只有 atk/health/cost/direction/armor）。
+//    **M4 / 决策 #9 补上了 `cond.has_color`**（irVersion 2.2.0），阵营筛选于是有了对应物：
+//    `HasFaction("mage")` → `IsBlue()`（《数值基准》§1.1：蓝 = 魔法）。
+//    §10.5 因此恢复成文档原样的**两个子句**，只剩"阵营词汇 → 颜色词汇"这一层翻译。
 // 4. **`FRIENDLY_MINIONS` 的含义变了**（v2.1 §11.2）：v1 那时没有占格英雄，
 //    "友方随从" = 友方 board 全部；今天该语义的常量叫 `FRIENDLY_UNITS`。
 //    §10.3 / §10.4 照抄时用 `*_UNITS`，这样与文档 JSON 逐字节一致；
@@ -49,6 +50,7 @@ import {
   HasTribe,
   Healed,
   Hit,
+  IsBlue,
   IsSpell,
   IT,
   intercept,
@@ -281,26 +283,32 @@ export const DOC_10_4_SCRIPT = {
  *   AddToHand(CONTROLLER, CHOSEN),
  * ]
  * ```
- * `HasFaction("mage")` 今天无法表达（差异 3），这里只保留 `IsSpell()` 那一半。
+ * `HasFaction("mage")` 按差异 3 翻译成 `IsBlue()`（`cond.has_color`，决策 #9）。
  * 其余原样：`Discover` 补默认 `show: 3, pick: 1`（文档 JSON 就是这么写的），
  * `AddToHand(CONTROLLER, CHOSEN)` 把选择器包成 `card.of`。
  */
 export const CORE_050_PLAY: readonly Act[] = [
-  Discover(CardPool(IsSpell())),
+  Discover(CardPool(IsSpell().and(IsBlue()))),
   AddToHand(CONTROLLER, CHOSEN),
 ];
 
 /**
- * IR §10.5 的 `play` 段，**去掉了无法表达的 `has_tag(it,"faction_mage")` 子句**（差异 3）。
- * 去掉后 `cond.and` 只剩一个子句，故 `filter` 直接是那个子句本身
- * —— 这是与文档 JSON 唯一的结构差别，测试里如实标注。
+ * IR §10.5 的 `play` 段，**逐字符抄录，只把阵营子句换成颜色子句**（差异 3）：
+ * `cond.has_tag(it,"faction_mage")` → `cond.has_color(it,"blue")`。
+ * `cond.and` 的两个子句、`show` / `pick`、`card.of` 都与文档 JSON 一致。
  */
 export const DOC_10_5_PLAY = [
   {
     op: "act.discover",
     from: {
       op: "card.pool",
-      filter: { op: "cond.is_kind", of: { op: "sel.it" }, kind: "spell" },
+      filter: {
+        op: "cond.and",
+        of: [
+          { op: "cond.is_kind", of: { op: "sel.it" }, kind: "spell" },
+          { op: "cond.has_color", of: { op: "sel.it" }, color: "blue" },
+        ],
+      },
     },
     show: 3,
     pick: 1,

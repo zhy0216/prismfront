@@ -131,6 +131,20 @@ function canonicalizeColors(colors: readonly Color[]): readonly Color[] {
   return orderedSubset(COLORS, colors);
 }
 
+/**
+ * `cond.has_color.color`：与 `canonicalizeKinds` 同款处理（决策 #9 要求签名对齐 `is_kind`）。
+ *
+ * 与上面的 {@link canonicalizeColors} 分开写不是重复：`data.colors` 是**卡面字段**，
+ * 规范形式里永远是数组（v2.1 §11.4 定的就是 `Color[]`，融合卡靠长度 2 表达）；
+ * 这里是**节点参数位**，适用规则 4「单元素集合退化为标量」。
+ */
+function canonicalizeColorArg(color: Color | readonly Color[]): Color | readonly Color[] {
+  if (typeof color === "string") {
+    return color;
+  }
+  return collapse(orderedSubset(COLORS, color));
+}
+
 /** `trigger.filter`：按 `EVENT_ENTITY_FIELDS`（source, target, player）排。 */
 function canonicalizeTriggerFilter(filter: TriggerFilter): TriggerFilter {
   const out: TriggerFilter = {};
@@ -374,6 +388,8 @@ export function canonicalizeCond(node: Cond): Cond {
       return { op: node.op, of: canonicalizeSel(node.of), flag: node.flag };
     case "cond.is_kind":
       return { op: node.op, of: canonicalizeSel(node.of), kind: canonicalizeKinds(node.kind) };
+    case "cond.has_color":
+      return { op: node.op, of: canonicalizeSel(node.of), color: canonicalizeColorArg(node.color) };
     case "cond.has_tribe":
       return { op: node.op, of: canonicalizeSel(node.of), tribe: node.tribe };
     case "cond.in_zone":

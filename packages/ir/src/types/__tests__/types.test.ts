@@ -28,9 +28,12 @@ import {
 } from "../index.ts";
 
 describe("架构 §10 规范一致性清理", () => {
-  test("第 1 项：irVersion 定为 2.1.0（v2 §0 的 2.0.0 作废）", () => {
-    expect(IR_VERSION).toBe("2.1.0");
+  test("第 1 项：irVersion 基线定为 2.1.0（v2 §0 的 2.0.0 作废），今天是 minor bump 后的 2.2.0", () => {
+    // 2.1.0 → 2.2.0：决策 #9 新增 `cond.has_color`。IR §8「新增 op = minor」，
+    // 既有 op 的语义与字段一个没改，所以 major 仍是 2（engine 的拒载判据不受影响）。
+    expect(IR_VERSION).toBe("2.2.0");
     expect(IR_VERSION_MAJOR).toBe(2);
+    expect(IR_VERSION.startsWith(`${IR_VERSION_MAJOR}.`)).toBe(true);
   });
 
   test("第 2 项：RulesConfig 的 heroHp 改名 baseHp", () => {
@@ -227,13 +230,21 @@ describe("规范示例可用权威类型表达", () => {
     expect(script.play?.length).toBe(1);
   });
 
-  test("IR v1 §10.5 发现：card.pool + act.give + card.of(sel.chosen)", () => {
+  test("IR v1 §10.5 发现：card.pool + act.give + card.of(sel.chosen)，两个子句都表达得出", () => {
+    // 文档原文是 `IsSpell().and(HasFaction("mage"))`。faction 已废（v2.1 §11.4），
+    // 阵营子句今天由 `cond.has_color` 承接（决策 #9，2.2.0 新增）。
     const play: readonly Act[] = [
       {
         op: "act.discover",
         from: {
           op: "card.pool",
-          filter: { op: "cond.is_kind", of: { op: "sel.it" }, kind: "spell" },
+          filter: {
+            op: "cond.and",
+            of: [
+              { op: "cond.is_kind", of: { op: "sel.it" }, kind: "spell" },
+              { op: "cond.has_color", of: { op: "sel.it" }, color: "blue" },
+            ],
+          },
         },
         show: 3,
         pick: 1,

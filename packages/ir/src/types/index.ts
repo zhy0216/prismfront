@@ -1,4 +1,4 @@
-// packages/ir/src/types —— IR 权威类型（irVersion 2.1.0）。
+// packages/ir/src/types —— IR 权威类型（irVersion 2.2.0 = 2.1.0 基线 + 决策 #9 的 cond.has_color）。
 //
 // 这份类型是**唯一权威定义**（IR §12 落地顺序第 1 步）：
 // engine 的 handler 表与求值器、cards 的 builder、L1/L2 校验器、printer/differ 全从它派生。
@@ -11,7 +11,7 @@
 //   3. 《格子战斗卡牌 DSL 规范 v2》§11       —— v2.1 增补（英雄 / 色门 / 融合 / 复燃泉）
 // 并顺带做掉《Prismfront 工程与技术架构》§10 的六项规范一致性清理，
 // 每一项都在对应位置留了「架构 §10 第 N 项」注释：
-//   1. irVersion 定为 "2.1.0"                 → ir-version.ts
+//   1. irVersion 基线定为 "2.1.0"             → ir-version.ts（今天是 2.2.0，minor bump 的理由写在那）
 //   2. RulesConfig.heroHp → baseHp            → rules-config.ts
 //   3. ZoneName 补 base / fountain、删 hero    → zone.ts
 //   4. Side 拆成 SlotSide / SelSide            → zone.ts

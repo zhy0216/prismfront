@@ -129,6 +129,8 @@ export interface KindValueMap {
   slotOrSlots: SlotRef | readonly SlotRef[];
   zoneOrZones: ZoneName | readonly ZoneName[];
   cardKindOrKinds: CardKind | readonly CardKind[];
+  /** `cond.has_color.color`：单色或色表（列表 = 存在量化，决策 #9）。 */
+  colorOrColors: Color | readonly Color[];
   /** `script.target`：IR §2.2「省略等价于空数组 / null」，所以 null 是合法写法。 */
   selOrNull: Sel | null;
   condOrNull: Cond | null;
@@ -349,6 +351,7 @@ export const KIND_SPECS = {
   slotOrSlots: { form: "union", of: ["slot[]", "slot"], describe: "slot.* 或其数组" },
   zoneOrZones: { form: "union", of: ["zone[]", "zone"], describe: "ZoneName 或其数组" },
   cardKindOrKinds: { form: "union", of: ["cardKind[]", "cardKind"], describe: "CardKind 或其数组" },
+  colorOrColors: { form: "union", of: ["color[]", "color"], describe: "Color 或其数组" },
   selOrNull: { form: "union", of: ["null", "sel"], describe: "sel.* 或 null" },
   condOrNull: { form: "union", of: ["null", "cond"], describe: "boolean / cond.* 或 null" },
   numOrNull: { form: "union", of: ["null", "num"], describe: "number / num.* 或 null" },

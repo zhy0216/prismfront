@@ -156,8 +156,17 @@ describe("IR §10 六个示例 —— 与文档 JSON 逐字节比对", () => {
     expect(scriptJson(CORE_040.script)).toBe(scriptJson(DOC_10_4_SCRIPT));
   });
 
-  test("§10.5 发现：比 play 段（去掉了今天无法表达的 HasFaction 子句，见 fixtures 差异 3）", () => {
+  test("§10.5 发现：比 play 段（两个子句都在，HasFaction → IsBlue，见 fixtures 差异 3）", () => {
+    // M1 时 `HasFaction("mage")` 没有对应 op，这条只比对了 `IsSpell()` 那一半；
+    // M4 / 决策 #9 加了 `cond.has_color`（IR 2.2.0）之后，卡池过滤恢复成文档的 `cond.and` 两子句，
+    // 与文档 JSON 只差"阵营词汇 → 颜色词汇"这一层翻译（faction mage → 蓝，《数值基准》§1.1）。
     expect(actsJson(CORE_050_PLAY)).toBe(actsJson(DOC_10_5_PLAY));
+  });
+
+  test("§10.5 的卡池过滤真的用上了 cond.has_color（不是又退回单子句）", () => {
+    expect(actsJson(CORE_050_PLAY)).toContain(
+      '{"op":"cond.has_color","of":{"op":"sel.it"},"color":"blue"}',
+    );
   });
 
   test("§10.6 圣盾：比 intercepts 段（这一段与今天的规范无差异，纯逐字节）", () => {

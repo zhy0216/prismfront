@@ -58,9 +58,10 @@
 // 接入点见 {@link playCard} 里标出的那一行。
 
 import type { Act, Duration } from "@prismfront/ir";
+import { playerEntityId } from "../eval/index.ts";
 import type { GameEvent } from "../events/index.ts";
 import { emitEvent } from "../events/index.ts";
-import { drawOne, moveToZone, placeOnSlot, playerEntity } from "../handlers/index.ts";
+import { drawOne, moveToZone, placeOnSlot } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
 import { pushActs, queueTriggers, refreshAuras, resolve } from "../resolve/index.ts";
 import type { CtxBindings, EntityData, GameState, PlayerId } from "../state/index.ts";
@@ -82,7 +83,7 @@ import type { DeployPick, Intent } from "./intent.ts";
 /**
  * 「没有实体」的哨兵 id（`state/create.ts`：实体 id 从 1 起，0 空出来当哨兵）。
  *
- * 用作规则伤害（疲劳）的 `ctx.self`：`handlers/read.ts` 的 `sourceOf` 查不到实体就返回
+ * 用作规则伤害（疲劳）的 `ctx.self`：`handlers/targets.ts` 的 `sourceOf` 查不到实体就返回
  * `null`，于是 `damaged.source` 是 `null` —— 正是"无施动实体的伤害"这个语义
  * （`events/event.ts` 的 `damaged` 注释）。
  */
@@ -313,7 +314,7 @@ export function refillCrystals(state: GameState): void {
     if (gained > 0) {
       emitEvent(state, {
         name: "crystal_gained",
-        player: playerEntity(state, player),
+        player: playerEntityId(state, player),
         amount: gained,
       });
     }
@@ -469,7 +470,7 @@ function applyDeploy(
       hero.respawnAt = null;
       emitEvent(state, {
         name: "hero_deployed",
-        player: playerEntity(state, player),
+        player: playerEntityId(state, player),
         target: hero.id,
         cardId: hero.cardId,
         slot: pick.slot,
@@ -513,12 +514,12 @@ function playCard(state: GameState, player: PlayerId, card: EntityData, slot: nu
 
   emitEvent(state, {
     name: "action_taken",
-    player: playerEntity(state, player),
+    player: playerEntityId(state, player),
     kind: "play_card",
   });
   emitEvent(state, {
     name: "card_played",
-    player: playerEntity(state, player),
+    player: playerEntityId(state, player),
     target: card.id,
     cardId: card.cardId,
   });
@@ -559,7 +560,7 @@ function playCard(state: GameState, player: PlayerId, card: EntityData, slot: nu
  * `round_start` 被重置为新的 `initiative`，中间这段它没有意义。
  */
 function passAction(state: GameState, player: PlayerId): null {
-  emitEvent(state, { name: "player_passed", player: playerEntity(state, player) });
+  emitEvent(state, { name: "player_passed", player: playerEntityId(state, player) });
   if (state.firstPasser === null) {
     state.firstPasser = player;
   }

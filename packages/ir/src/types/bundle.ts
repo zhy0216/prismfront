@@ -16,7 +16,7 @@ import type { NodeOp } from "./ops.ts";
  */
 export interface Bundle {
   /**
-   * 本规范的 semver（架构 §10 第 1 项定为 `"2.1.0"`，见 `IR_VERSION`）。
+   * 本规范的 semver（架构 §10 第 1 项把基线定为 `"2.1.0"`，当前值见 `IR_VERSION`）。
    * engine 声明支持区间（如 `>=2.0.0 <3.0.0`），major 不匹配直接拒载（IR v1 §8）。
    */
   irVersion: IRVersion;

@@ -173,7 +173,7 @@ export function resolve(state: GameState, deps: ResolveDeps): GameEvent[] {
     //    **日志区间**取出来 —— 不让 handler 返回数组，就不会出现两个事件真相源，
     //    也不可能重复计入（`events/log.ts` 的论证）。
     const mark = state.eventLog.length;
-    runHandler(state, ctx, action, deps.handlers);
+    runHandler(state, ctx, action, deps);
     const emitted = state.eventLog.slice(mark);
 
     // ④ 事后触发：按「当前回合玩家优先，再按 playOrder 升序」入栈（规则 1 + 规则 2）
