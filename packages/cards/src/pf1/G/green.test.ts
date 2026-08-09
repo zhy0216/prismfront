@@ -67,7 +67,11 @@ describe("绿 · 翠冠议会", () => {
     // 一条式子把 §6 绿净水那五行整体钉住：任何一张被改动，这里立刻红。
     // §6 绿表**没有 5 费净水**（那一格给了 G09 光环卡），所以费用序列有跳档。
     expect(
-      GREEN_CARDS.map((card) => [card.data.cost, card.data.tags?.atk, card.data.tags?.health]),
+      GREEN_CARDS.slice(0, 5).map((card) => [
+        card.data.cost,
+        card.data.tags?.atk,
+        card.data.tags?.health,
+      ]),
     ).toEqual([
       [1, 2, 2],
       [2, 3, 3],

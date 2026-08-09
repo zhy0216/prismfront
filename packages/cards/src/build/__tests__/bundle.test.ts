@@ -148,19 +148,9 @@ describe("真正的卡表（CARD_SOURCES）", () => {
   test("能构建、能过校验", () => {
     const bundle = buildBundle({ cards: CARD_SOURCES, enchantments: ENCHANTMENT_SOURCES });
     expect(validate(bundle).issues).toEqual([]);
-    // M4/E6 的首批 10 张（键按 id 排序写入，与源文件的聚合顺序无关）。
-    expect(Object.keys(bundle.cards)).toEqual([
-      "PF1_B01",
-      "PF1_B02",
-      "PF1_G01",
-      "PF1_G02",
-      "PF1_G03",
-      "PF1_G04",
-      "PF1_G05",
-      "PF1_R01",
-      "PF1_R07",
-      "PF1_R09",
-    ]);
+    // M11：33 张专属卡 + 3 名英雄；键按 id 排序。
+    expect(Object.keys(bundle.cards)).toHaveLength(36);
+    expect(Object.values(bundle.cards).filter((card) => card.data.kind === "hero")).toHaveLength(3);
   });
 
   test("卡表里没有重复 id（撞 id 会在这里先炸）", () => {

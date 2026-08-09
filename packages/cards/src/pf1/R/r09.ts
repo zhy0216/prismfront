@@ -19,6 +19,7 @@ import { ANY_CHARACTER, defineCard, Hit, TARGET } from "@prismfront/ir";
 
 export const PF1_R09 = defineCard({
   id: "PF1_R09",
+  hero: "PF1_HERO_RED",
   name: { zh: "火球术", en: "Fireball" },
   kind: "spell",
   cost: 4,

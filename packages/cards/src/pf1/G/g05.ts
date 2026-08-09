@@ -11,6 +11,7 @@ import { defineCard } from "@prismfront/ir";
 
 export const PF1_G05 = defineCard({
   id: "PF1_G05",
+  hero: "PF1_HERO_GREEN",
   name: { zh: "擎天古木", en: "Titanbough Elder" },
   kind: "minion",
   cost: 6,

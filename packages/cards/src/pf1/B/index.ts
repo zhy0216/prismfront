@@ -13,12 +13,39 @@
 import type { Card, Enchantment } from "@prismfront/ir";
 import { PF1_B01 } from "./b01.ts";
 import { PF1_B02 } from "./b02.ts";
+import { PF1_B03 } from "./b03.ts";
+import { PF1_B04 } from "./b04.ts";
+import { PF1_B05 } from "./b05.ts";
+import { PF1_B06 } from "./b06.ts";
+import { PF1_B07 } from "./b07.ts";
+import { PF1_B08 } from "./b08.ts";
+import { PF1_B09 } from "./b09.ts";
+import { PF1_B10 } from "./b10.ts";
 
 export { PF1_B01 } from "./b01.ts";
 export { PF1_B02 } from "./b02.ts";
+export { PF1_B03 } from "./b03.ts";
+export { PF1_B04 } from "./b04.ts";
+export { PF1_B05 } from "./b05.ts";
+export { PF1_B06 } from "./b06.ts";
+export { PF1_B07 } from "./b07.ts";
+export { PF1_B08 } from "./b08.ts";
+export { PF1_B09 } from "./b09.ts";
+export { PF1_B10 } from "./b10.ts";
 
 /** 蓝卡表。顺序不影响产物（`buildBundle` 按 id 排序），按卡号写便于人读。 */
-export const BLUE_CARDS: readonly Card[] = [PF1_B01, PF1_B02];
+export const BLUE_CARDS: readonly Card[] = [
+  PF1_B01,
+  PF1_B02,
+  PF1_B03,
+  PF1_B04,
+  PF1_B05,
+  PF1_B06,
+  PF1_B07,
+  PF1_B08,
+  PF1_B09,
+  PF1_B10,
+];
 
 /** 蓝卡引用的附魔（M11 起可能有，目前一个都不需要）。 */
 export const BLUE_ENCHANTMENTS: readonly Enchantment[] = [];

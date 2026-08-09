@@ -12,15 +12,43 @@
 
 import type { Card, Enchantment } from "@prismfront/ir";
 import { PF1_R01 } from "./r01.ts";
+import { PF1_R02 } from "./r02.ts";
+import { PF1_R03 } from "./r03.ts";
+import { PF1_R04 } from "./r04.ts";
+import { PF1_R05 } from "./r05.ts";
+import { PF1_R06 } from "./r06.ts";
 import { PF1_R07 } from "./r07.ts";
+import { PF1_R08 } from "./r08.ts";
 import { PF1_R09 } from "./r09.ts";
+import { PF1_R10 } from "./r10.ts";
+import { PF1_R11 } from "./r11.ts";
 
 export { PF1_R01 } from "./r01.ts";
+export { PF1_R02 } from "./r02.ts";
+export { PF1_R03 } from "./r03.ts";
+export { PF1_R04 } from "./r04.ts";
+export { PF1_R05 } from "./r05.ts";
+export { PF1_R06 } from "./r06.ts";
 export { PF1_R07 } from "./r07.ts";
+export { PF1_R08 } from "./r08.ts";
 export { PF1_R09 } from "./r09.ts";
+export { PF1_R10 } from "./r10.ts";
+export { PF1_R11 } from "./r11.ts";
 
 /** 红卡表。顺序不影响产物（`buildBundle` 按 id 排序），按卡号写便于人读。 */
-export const RED_CARDS: readonly Card[] = [PF1_R01, PF1_R07, PF1_R09];
+export const RED_CARDS: readonly Card[] = [
+  PF1_R01,
+  PF1_R02,
+  PF1_R03,
+  PF1_R04,
+  PF1_R05,
+  PF1_R06,
+  PF1_R07,
+  PF1_R08,
+  PF1_R09,
+  PF1_R10,
+  PF1_R11,
+];
 
 /** 红卡引用的附魔（M11 起可能有，目前一个都不需要）。 */
 export const RED_ENCHANTMENTS: readonly Enchantment[] = [];

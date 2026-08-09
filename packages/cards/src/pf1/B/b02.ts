@@ -23,6 +23,7 @@ import { CONTROLLER, Draw, defineCard } from "@prismfront/ir";
 
 export const PF1_B02 = defineCard({
   id: "PF1_B02",
+  hero: "PF1_HERO_BLUE",
   name: { zh: "引光术", en: "Lightdraw" },
   kind: "spell",
   cost: 2,

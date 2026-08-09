@@ -25,6 +25,7 @@ import { ALL_UNITS, defineCard, Hit, TARGET } from "@prismfront/ir";
 
 export const PF1_R07 = defineCard({
   id: "PF1_R07",
+  hero: "PF1_HERO_RED",
   name: { zh: "灼刺", en: "Ember Lance" },
   kind: "spell",
   cost: 1,

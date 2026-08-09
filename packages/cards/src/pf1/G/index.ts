@@ -14,15 +14,47 @@ import { PF1_G02 } from "./g02.ts";
 import { PF1_G03 } from "./g03.ts";
 import { PF1_G04 } from "./g04.ts";
 import { PF1_G05 } from "./g05.ts";
+import { PF1_G06 } from "./g06.ts";
+import { PF1_G07, PF1_G07_ENCH } from "./g07.ts";
+import { PF1_G08, PF1_G08_ENCH } from "./g08.ts";
+import { PF1_G09 } from "./g09.ts";
+import { PF1_G10, PF1_G10_ENCH } from "./g10.ts";
+import { PF1_G11 } from "./g11.ts";
+import { PF1_G12, PF1_G12_ENCH } from "./g12.ts";
 
 export { PF1_G01 } from "./g01.ts";
 export { PF1_G02 } from "./g02.ts";
 export { PF1_G03 } from "./g03.ts";
 export { PF1_G04 } from "./g04.ts";
 export { PF1_G05 } from "./g05.ts";
+export { PF1_G06 } from "./g06.ts";
+export { PF1_G07, PF1_G07_ENCH } from "./g07.ts";
+export { PF1_G08, PF1_G08_ENCH } from "./g08.ts";
+export { PF1_G09 } from "./g09.ts";
+export { PF1_G10, PF1_G10_ENCH } from "./g10.ts";
+export { PF1_G11 } from "./g11.ts";
+export { PF1_G12, PF1_G12_ENCH } from "./g12.ts";
 
 /** 绿卡表。顺序不影响产物（`buildBundle` 按 id 排序），按卡号写便于人读。 */
-export const GREEN_CARDS: readonly Card[] = [PF1_G01, PF1_G02, PF1_G03, PF1_G04, PF1_G05];
+export const GREEN_CARDS: readonly Card[] = [
+  PF1_G01,
+  PF1_G02,
+  PF1_G03,
+  PF1_G04,
+  PF1_G05,
+  PF1_G06,
+  PF1_G07,
+  PF1_G08,
+  PF1_G09,
+  PF1_G10,
+  PF1_G11,
+  PF1_G12,
+];
 
 /** 绿卡引用的附魔（G08 成长、G10 +2/+2 会用到，M11 落地）。 */
-export const GREEN_ENCHANTMENTS: readonly Enchantment[] = [];
+export const GREEN_ENCHANTMENTS: readonly Enchantment[] = [
+  PF1_G07_ENCH,
+  PF1_G08_ENCH,
+  PF1_G10_ENCH,
+  PF1_G12_ENCH,
+];

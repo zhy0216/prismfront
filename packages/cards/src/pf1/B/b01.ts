@@ -31,6 +31,7 @@ import { CHOSEN, defineCard, FRIENDLY_UNITS, SelectTarget, Swap, TARGET } from "
 
 export const PF1_B01 = defineCard({
   id: "PF1_B01",
+  hero: "PF1_HERO_BLUE",
   name: { zh: "换位术", en: "Refraction Swap" },
   kind: "spell",
   cost: 1,

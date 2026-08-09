@@ -15,12 +15,12 @@
 
 import { readFileSync } from "node:fs";
 import type { Bundle } from "@prismfront/ir";
-import { formatIssues, validate } from "@prismfront/ir";
+import { formatIssues, validateL3 } from "@prismfront/ir";
 
 const IR_PATH = new URL("../dist/cards.ir.json", import.meta.url);
 
 const document: unknown = JSON.parse(readFileSync(IR_PATH, "utf8"));
-const result = validate(document);
+const result = validateL3(document);
 
 if (result.issues.length > 0) {
   console.error(`ir:validate ✗ ${IR_PATH.pathname}：${result.issues.length} 处问题`);
@@ -31,5 +31,5 @@ if (result.issues.length > 0) {
 // L1 + L2 全过 ⇒ 可以安全地按 `Bundle` 使用（validate.ts 的第 3 条约定）。
 const bundle = document as Bundle;
 console.log(
-  `ir:validate ✓ ${bundle.bundleId}：${Object.keys(bundle.cards).length} 张卡通过 L1 + L2`,
+  `ir:validate ✓ ${bundle.bundleId}：${Object.keys(bundle.cards).length} 张卡通过 L1 + L2 + L3`,
 );
