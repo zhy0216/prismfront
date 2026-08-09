@@ -84,6 +84,8 @@ export interface CardSpec {
   tribe?: TribeName;
   art?: string;
   collectible?: boolean;
+  /** 构筑层专属英雄；引擎不读取。 */
+  hero?: CardId;
   /** 基础攻击力 → `data.tags.atk`。 */
   atk?: number;
   /** 基础血量 → `data.tags.health`。 */
@@ -142,6 +144,9 @@ function buildCardData(spec: CardSpec): CardData {
   }
   if (spec.collectible !== undefined) {
     data.collectible = spec.collectible;
+  }
+  if (spec.hero !== undefined) {
+    data.hero = spec.hero;
   }
   return data;
 }

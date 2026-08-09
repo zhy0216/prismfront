@@ -43,6 +43,11 @@ export interface CardData {
   /** 是否可收藏（token 为 false）。 */
   collectible?: boolean;
   /**
+   * 所属英雄（纯构筑层元数据）。**引擎不读此字段**；它只供卡组配额与
+   * 色门 lint 使用，避免归属渗进 legality。
+   */
+  hero?: CardId;
+  /**
    * 基础属性，例：`{ atk: 4, health: 4 }`。法术写 `{}` 或省略。
    * 这些是 base 值，生效值 = base + Σ附魔 + Σ生效光环（v2 §2.3）。
    */

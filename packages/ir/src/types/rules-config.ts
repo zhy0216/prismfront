@@ -106,6 +106,10 @@ export interface RulesConfig {
      * 即**恰好缺席一整回合**，到期后在 deploy 阶段重新选格上场（v2.1 §11.3、里程碑 M6）。
      */
     respawnDelay: number;
+    /** 是否允许一组卡组选重复英雄；PF1 固定 false。 */
+    allowDuplicates?: boolean;
+    /** 每名英雄的构筑配额；PF1 固定 10。 */
+    cardsPerHero?: number;
   };
 }
 
@@ -121,9 +125,15 @@ export const DEFAULT_RULES_CONFIG = {
   pass: { combatAfterConsecutivePasses: 2 },
   initiative: "alternate",
   baseHp: 30,
-  deck: { size: 30, maxCopies: 2, startingHand: 4, drawPerRound: 1, fatigue: true },
+  deck: { size: 30, maxCopies: 3, startingHand: 4, drawPerRound: 1, fatigue: true },
   playerActions: ["play_card"],
   actionSeconds: 30,
   reconnectSeconds: 90,
-  heroes: { perDeck: 3, deploySchedule: [2, 1], respawnDelay: 1 },
+  heroes: {
+    perDeck: 3,
+    deploySchedule: [2, 1],
+    respawnDelay: 1,
+    allowDuplicates: false,
+    cardsPerHero: 10,
+  },
 } as const satisfies RulesConfig;

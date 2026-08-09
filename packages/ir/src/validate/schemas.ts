@@ -223,6 +223,7 @@ const CARD_DATA_SCHEMA = {
   tribe: "?tribeOrNull",
   art: "?string",
   collectible: "?boolean",
+  hero: "?string",
   tags: "?tagMods",
 } as const satisfies ObjectSchema<CardData>;
 

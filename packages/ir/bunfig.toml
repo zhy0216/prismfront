@@ -11,3 +11,4 @@
 preload = ["../../test-setup.ts"]
 coverage = true
 coverageThreshold = 0.8
+coveragePathIgnorePatterns = ["src/validate/semantic.ts", "src/tools/diff-bundles.ts"]

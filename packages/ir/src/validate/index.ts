@@ -73,6 +73,7 @@ export {
   validateEnchantment,
   validateL1,
   validateL2,
+  validateL3,
   validateNode,
 } from "./validate.ts";
 export type { WalkContext } from "./walk.ts";

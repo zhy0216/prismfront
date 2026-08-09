@@ -15,6 +15,7 @@ import type { Bundle, Card, Enchantment } from "../types/index.ts";
 import type { ValidationIssue, ValidationLayer, ValidationResult } from "./issues.ts";
 import { formatIssues, VALIDATION_LAYERS } from "./issues.ts";
 import type { FieldKind } from "./kinds.ts";
+import { validateSemantic } from "./semantic.ts";
 import { checkKind, createContext } from "./walk.ts";
 
 export interface ValidateOptions {
@@ -67,6 +68,13 @@ export const validateL1 = (bundle: unknown, options?: ValidateOptions): Validati
 /** 只跑 L2 种类层的 bundle 校验。 */
 export const validateL2 = (bundle: unknown, options?: ValidateOptions): ValidationResult =>
   validate(bundle, { ...options, layers: ["L2"] });
+
+/** M11 semantic/reference/colour-wheel lint. */
+export const validateL3 = (bundle: unknown, options?: ValidateOptions): ValidationResult => {
+  const structural = validate(bundle, { ...options, layers: ["L1", "L2"] });
+  if (!structural.ok) return structural;
+  return toResult(validateSemantic(bundle as Bundle));
+};
 
 /** 校验单张卡（M4 的构建流程按卡校验，报错路径就是 `card.<id>.…`）。 */
 export const validateCard = (card: unknown, options?: ValidateOptions): ValidationResult =>

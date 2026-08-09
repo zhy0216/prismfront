@@ -719,7 +719,7 @@ export function canonicalizeAura(node: Aura): Aura {
 
 /**
  * 规范化 `card.data`。键序照 IR §2.2 的字段表：
- * `name, text, kind, cost, colors, rarity, tribe, art, collectible, tags`。
+ * `name, text, kind, cost, colors, rarity, tribe, art, collectible, hero, tags`。
  * `tribe: null` 视同缺省（IR §2.2 的示例写 `null`，规范形式统一省略）。
  */
 export function canonicalizeCardData(data: CardData): CardData {
@@ -733,7 +733,9 @@ export function canonicalizeCardData(data: CardData): CardData {
   if (data.cost !== undefined) {
     mid.cost = data.cost;
   }
-  const tail: Partial<Pick<CardData, "rarity" | "tribe" | "art" | "collectible" | "tags">> = {};
+  const tail: Partial<
+    Pick<CardData, "rarity" | "tribe" | "art" | "collectible" | "hero" | "tags">
+  > = {};
   if (isSet(data.rarity)) {
     tail.rarity = data.rarity;
   }
@@ -745,6 +747,9 @@ export function canonicalizeCardData(data: CardData): CardData {
   }
   if (data.collectible !== undefined) {
     tail.collectible = data.collectible;
+  }
+  if (data.hero !== undefined) {
+    tail.hero = data.hero;
   }
   if (isSet(data.tags)) {
     const tags = canonicalizeTagMap(data.tags);

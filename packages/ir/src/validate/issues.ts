@@ -7,7 +7,7 @@
 /** 校验层（IR §7）。L3 语义校验是 M11 的事，这里只登记 M1 落地的两层。 */
 export const VALIDATION_LAYERS = ["L1", "L2"] as const;
 
-export type ValidationLayer = (typeof VALIDATION_LAYERS)[number];
+export type ValidationLayer = "L1" | "L2" | "L3";
 
 /**
  * 问题类型。
