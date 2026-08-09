@@ -52,6 +52,9 @@
 //
 // 上层 `src/index.ts` 由外层统一组装，本目录不参与。
 
+// M7 方便索引（实现位于 view/，这里也转出以保持 rules/ 测试与调用方的入口一致）。
+export type { LegalAction, LegalActionsDeps, LegalMoves } from "../view/legal-actions.ts";
+export { legalActions } from "../view/legal-actions.ts";
 export { apply, lockedColorsOf } from "./apply.ts";
 export type { PlannedStrike } from "./combat.ts";
 export { planStrikes, resolveStrikes } from "./combat.ts";
