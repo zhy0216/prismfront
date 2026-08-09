@@ -61,6 +61,16 @@ const FRIENDLY_BOARD: Sel = { op: "sel.zone", side: "friendly", zone: "board" };
 const SELF: Sel = { op: "sel.self" };
 /** 友军（不含自己）—— 野猪王式光环的受影响集合（IR v1 §10.3）。 */
 const OTHER_FRIENDLIES: Sel = { op: "sel.minus", of: FRIENDLY_BOARD, exclude: SELF };
+/**
+ * 友方**随从** —— IR 的 `FRIENDLY_MINIONS` 展开式（v2.1 §11.2 的词汇分化）：
+ * 比 `FRIENDLY_UNITS` 多一层 `sel.where(cond.is_kind(it,"minion"))`，把英雄滤掉。
+ * 形状照抄 `ir/src/builder/constants.ts`，不 import 那个常量（禁令 1，见文件头）。
+ */
+const FRIENDLY_MINIONS: Sel = {
+  op: "sel.where",
+  of: FRIENDLY_BOARD,
+  cond: { op: "cond.is_kind", of: { op: "sel.it" }, kind: "minion" },
+};
 
 /** 造一张只带光环的测试卡。 */
 function auraCard(id: string, ...auras: Aura[]): Card {
@@ -376,6 +386,40 @@ test("★ Σ光环：affects 里读**卡面**的那一支要走 deps.cards（IR 
   expect(tagOf(after, redAlly, "atk")).toBe(2);
   // 宿主是红色（`scriptCard` 的缺省色），同样不该吃到。
   expect(tagOf(after, host, "atk")).toBe(1);
+});
+
+test("★ 写「友方随从」的光环不吃英雄，同一条写「友方单位」才吃（v2.1 §11.2 词汇分化）", () => {
+  // v2.1 §11.2 起英雄占格参战，`*_UNITS`（含英雄）与 `*_MINIONS`（排除英雄）分化开。
+  // 这条分化的**全部**意义就在光环上：v2 §8.4 那批写「友方随从」的老卡因此自动正确 ——
+  // 引擎里没有任何一行"光环要不要跳过英雄"的特判，它只是 `affects` 多了一层 `where`。
+  const heroCard = scriptCard("T_HERO", {}, { kind: "hero" });
+  const minionCard = scriptCard("T_MINION", {}, { kind: "minion" });
+  const minionLord = auraCard("AURA_MINIONS", { affects: FRIENDLY_MINIONS, mods: { atk: 1 } });
+  const unitLord = auraCard("AURA_UNITS", { affects: FRIENDLY_BOARD, mods: { atk: 1 } });
+  const deps = cardDeps([heroCard, minionCard, minionLord, unitLord]);
+
+  /** 同一个盘面、同一份攻血，**只换宿主那张卡** —— 差别只可能出在那层 `where` 上。 */
+  const run = (lord: Card): { allyAtk: number; heroAtk: number } => {
+    const state = openGame();
+    const host = putCard(state, 0, 0, lord, { atk: 0, health: 9 });
+    const ally = putCard(state, 0, 1, minionCard, { atk: 2, health: 4 });
+    const heroUnit = putCard(state, 0, 2, heroCard, { atk: 2, health: 9 });
+    const after = tick(state, host, deps);
+    return { allyAtk: tagOf(after, ally, "atk"), heroAtk: tagOf(after, heroUnit, "atk") };
+  };
+
+  const minionsOnly = run(minionLord);
+  expect(minionsOnly.allyAtk).toBe(3);
+  // ★ 本条目的全部内容在这一行：写错（`cond.is_kind` 的 kind 过滤没生效 ⇒
+  //   `FRIENDLY_MINIONS` 退回 `FRIENDLY_UNITS`）会读到 3 —— 老卡静默地把英雄一起加强，
+  //   而盘面上看不出任何异常（英雄本来就该在 `*_UNITS` 里，多加一个不报错）。
+  expect(minionsOnly.heroAtk).toBe(2);
+
+  // 对照：同一条 +1 攻写成「友方单位」时英雄**必须**吃到。这一半证明上面那个 2 是被
+  // `kind` 滤出来的，而不是光环压根没接上 / 英雄不在 `affects` 的取值域里。
+  const allUnits = run(unitLord);
+  expect(allUnits.allyAtk).toBe(3);
+  expect(allUnits.heroAtk).toBe(3);
 });
 
 test("★ 两趟重算：光环看不见别的光环的加成（结果与枚举顺序无关）", () => {

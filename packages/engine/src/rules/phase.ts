@@ -59,6 +59,7 @@
 // 条目"这条规则，见 {@link playCard} 里标出的那一段。
 
 import type { Act, Duration } from "@prismfront/ir";
+import type { CardLookup } from "../eval/index.ts";
 import { playerEntityId } from "../eval/index.ts";
 import type { GameEvent } from "../events/index.ts";
 import { emitEvent } from "../events/index.ts";
@@ -68,10 +69,12 @@ import { pushActs, queueTriggers, refreshAuras, resolve } from "../resolve/index
 import type { CtxBindings, EntityData, GameState, PlayerId } from "../state/index.ts";
 import {
   createCtx,
+  createTagValues,
   emptySlotIndices,
   FIRST_ROUND,
   getEntity,
   getZoneEntities,
+  NO_FLAGS,
   opponentOf,
   PLAYER_IDS,
   playerData,
@@ -390,22 +393,40 @@ function drawForRound(state: GameState): StepActs | null {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * 本回合按排期要部署几名英雄。
+ * 「从没上过场」的 `playOrder`（`state/entity.ts`：进 board / base 才取号，未上场恒为 0）。
+ *
+ * 它是**首次部署**与**复活重部署**唯一的判别式，见 {@link deployCountFor}。
+ * 用它而不是往 `GameState` 加一个"是不是初次上场"的新字段：取号只有 `placeOnSlot`
+ * 一处、死亡结算明写了 `playOrder` 保留不清（`resolve/deaths.ts`），
+ * 于是"泉里这名英雄上过场没有"这件事已经**有一个权威载体**，再加一个只会多一处能对不上的真相。
+ */
+const NEVER_DEPLOYED = 0;
+
+/**
+ * 本回合按排期要**首次部署**几名英雄。
  *
  * `rules.heroes.deploySchedule` 的语义按架构 §10 第 6 项定案：
  * **索引 = 第几个回合（0-based），值 = 该回合部署几名** —— `[2, 1]` = r1 部署 2 名、
  * r2 部署第 3 名（v2.1 §11.3）。排期之外的回合返回 0。
  *
- * ⚠ M6 要在这里补上**复活重部署**那一支：英雄阵亡后进复燃泉、`respawnAt` 到期时
- *   即使排期已经走完也要能重新部署。那一支依赖"阵亡 → fountain + 回写 respawnAt"
- *   的死亡分支（`resolve/deaths.ts` 里同样标着 M6），两件事必须一起做，
- *   所以这里不预先写一个走不到的分支。
+ * ── ★ 排期只管首次入场，**不管复活回场** ★ ────────────────────────────────
+ * `validate-config.ts` 要求 `Σ deploySchedule === heroes.perDeck`，也就是说这张表
+ * 恰好把卡组外那几名英雄各排了一次场 —— 它回答的是"哪一回合放**新**英雄进来"，
+ * 一名英雄死了又回来并不会让表里多出一项。所以复活的名额**不走这个函数**，
+ * 由 {@link deployCountFor} 单算（那里写了不这么分会怎样）。
  */
 export function deployQuotaOf(state: GameState): number {
   return state.rules.heroes.deploySchedule[state.round - FIRST_ROUND] ?? 0;
 }
 
-/** 某方复燃泉里**本回合可上场**的英雄（`respawnAt` 到期，v2.1 §11.3）。 */
+/**
+ * 某方复燃泉里**本回合可上场**的英雄（`respawnAt` 到期，v2.1 §11.3）。
+ *
+ * 两种英雄都在里面，`respawnAt` 是同一个字段的两次写入：建局时写 `1`（首次部署，
+ * `state/create.ts`）、阵亡时写 `当前回合 + 1 + respawnDelay`（`resolve/deaths.ts`）。
+ * 「到期」的判据因此只有一条。要区分二者请看 `playOrder`（{@link NEVER_DEPLOYED}），
+ * 它决定的是**名额**而不是**资格**（{@link deployCountFor}）。
+ */
 export function deployableHeroes(state: GameState, player: PlayerId): EntityData[] {
   const out: EntityData[] = [];
   for (const hero of getZoneEntities(state, player, "fountain")) {
@@ -417,7 +438,22 @@ export function deployableHeroes(state: GameState, player: PlayerId): EntityData
 }
 
 /**
- * 某方本回合实际要部署的名数 = min(排期, 泉里可用的, **战线空格数**)。
+ * 某方本回合实际要部署的名数 = min(**首次部署的名额 + 复活回场的名额**, 战线空格数)。
+ *
+ * ── ★ 两种部署的名额来源不同（v2.1 §11.3）★ ────────────────────────────────
+ * - **首次部署**（`playOrder === {@link NEVER_DEPLOYED}`，从没上过场）：受排期约束，
+ *   取 `min(排期, 泉里没上过场且到期的名数)`。`[2, 1]` 就是"r1 两名、r2 第三名"。
+ * - **复活重部署**（上过场、死过一次）：**不受排期约束**，`respawnAt` 到期的一律回场。
+ *
+ * 复活那一支必须绕开排期，否则英雄**永远回不来**：排期表只覆盖首次入场
+ * （`Σ deploySchedule === perDeck`，见 {@link deployQuotaOf}），`[2, 1]` 在 r3 起恒为 0，
+ * 而任何一次阵亡都至少要到 r3 才到期（r1 阵亡 ⇒ `respawnAt = 3`）—— 于是死掉的英雄
+ * 会一直躺在泉里不动。那个症状看起来像 `respawnAt` 算错，实际错在名额这一侧，
+ * 两处离得很远。
+ *
+ * 两者**相加**而不是取大：同一回合可能既有排期里的新英雄、又有到期回场的
+ * （`respawnDelay: 0` 的配置下 r1 阵亡的英雄 r2 就回来，正好撞上排期的第三名），
+ * 取大会静默吞掉其中一名 —— 而"少上场一名英雄"在色门那一侧表现为"某个颜色的牌打不出"。
  *
  * ── ★ 空格数必须进这个 min，否则 deploy 相位会死锁 ★ ──────────────────────
  * `apply.ts` 的 `checkDeploy` 拿本函数当「名数必须**刚好**」的判据，而每个 pick 还要
@@ -426,19 +462,35 @@ export function deployableHeroes(state: GameState, player: PlayerId): EntityData
  * 而 `pass` / `play_card` 在 deploy 相位是 `wrong_phase`，只剩认输能脱身。
  * 这与 {@link applyDeploy} 注释里那句「相位机必须能从 deploy 走出去」正面冲突。
  * 补上空格数之后 {@link needsDeploy} 也随之正确：站满 ⇒ 0 ⇒ 根本不进 deploy。
+ * **复活回场同受这一条**：泉里等着的英雄在战线站满时这一回合上不了场，只能等下一回合 ——
+ * 那是规则结果，不是要绕过的限制。
  *
  * 空格数走 `emptySlotIndices`（`state/queries.ts`）而不是在这里再数一遍：
  * 「哪些格是空的」全引擎只有那一处实现，三态（`undefined` 无效槽 / `null` 空 / id 有人）
  * 的判读也就只有一个口径。
  *
- * ⚠ M6 的复活重部署（见 {@link deployQuotaOf} 的 ⚠）同样受这条约束：泉里排着队的英雄
- *   在战线站满时**这一回合上不了场**，只能等下一回合 —— 那是规则结果，不是要绕过的限制。
+ * ⚠ 一个**已知的边角**：首次部署的英雄若在自己那一回合因为战线站满而没上成，排期翻篇后
+ *   它就再也拿不到名额（本函数只按**本回合**的排期给，不补发欠账）。PF1 走不到 ——
+ *   r1 的战线必然全空（建局到 r1 的 deploy 之间没有任何能占格的时机），排期第一项一定用得掉，
+ *   而 r2 只剩一名、5 点水晶也填不满 9 格。真要补发欠账，得先定"排期是当回合配额还是累计配额"
+ *   （规范 §11.3 只写了 `[2, 1]` 这一句），那是规则决定，不该由这里顺手发明。
+ *   同一个罕见状态还连带一件事：`checkDeploy` 只校验**名数**，不校验"这几名里哪些该是
+ *   首次、哪些该是回场"，于是那种状态下可以拿回场的名额换一名没上过场的英雄上场。
+ *   两件事同源，要补就一起补。
  */
 export function deployCountFor(state: GameState, player: PlayerId): number {
-  const quota = deployQuotaOf(state);
-  const available = deployableHeroes(state, player).length;
+  let fresh = 0;
+  let returning = 0;
+  for (const hero of deployableHeroes(state, player)) {
+    if (hero.playOrder === NEVER_DEPLOYED) {
+      fresh += 1;
+    } else {
+      returning += 1;
+    }
+  }
+  const scheduled = Math.min(deployQuotaOf(state), fresh);
   const vacancies = emptySlotIndices(state, player).length;
-  return Math.min(quota, available, vacancies);
+  return Math.min(scheduled + returning, vacancies);
 }
 
 /**
@@ -471,14 +523,60 @@ export function needsDeploy(state: GameState): boolean {
  * （校验阶段已经保证格位不冲突 —— 各自的战线本来也是分开的两行），
  * 这里只需要一个稳定顺序让事件流可回放，取最简单的那个。
  *
- * ⚠ M6 的部分：英雄的卡面属性（要卡表，M4）、阵亡 → 复燃泉 → `respawnAt` 回写、
- *   复活重部署、以及服务端那一侧的秘密收集与超时兜底。本函数只做 v2.1 §11.3 的
- *   **部署动作本身** —— 因为相位机必须能从 deploy 走出去，否则一局带英雄的对战
- *   会卡死在这个相位。
+ * ⚠ 仍属 M6 但**不在引擎里**：服务端那一侧的秘密收集与超时兜底（v2.1 §11.3 说
+ *   服务端收齐双方的秘密选择再喂给引擎，引擎这边只看得到聚合后的那一条）。
+ *
+ * ── ★ 上场时把**卡面**写下来（M6：英雄要有攻血才谈得上参战）★ ──────────────
+ * `state/create.ts` 的建局**不认识任何具体卡**（那个文件头的第一句），所以泉里的英雄
+ * 实体 `base` 全是 0；`placeOnSlot` 把一个 0/0 摆上场之后，流水线第 ⑤ 步当场判它死
+ * （`state/entity.ts` 的血量记账：当前血量 = `tags.health - damage`）。
+ * 于是"英雄占格参战"这件事的第一步就是在这里从卡表补上卡面 ——
+ * 取 `data.tags` 写进 `base` 与 `tags`，与 `handlers/board.ts` 的 `spawnOnSlot`
+ * （`act.summon` 新建单位那条路）逐字同源：atk / health / **direction** 一次写齐，
+ * 于是"按方向出手"也是免费拿到的，战斗侧一行特判都不用加。
+ *   - 写 `base` 而不是只写 `tags`：`tags` 是派生值，紧接着的 `refreshAuras`
+ *     （{@link runStep}）会从 `base` 重算覆盖（时序规则 4）。顺手对齐 `tags`
+ *     是为了本步之内的读取（同 `spawnOnSlot` 的取舍）。
+ *   - **整份覆盖**而不是逐键合并：复活重部署时这一步会再跑一次，合并会把上一条命
+ *     残留的卡面带进新的一条命。
+ *   - `data.cost` 不写：英雄在卡组外、不打出，没有费用（IR 的 `CardData.cost`
+ *     对 `kind:"hero"` 整个字段省略）。
+ *
+ * `cards` 查不到这张英雄卡（不接卡表的退化形态）⇒ **不写卡面、照常上场**。
+ * 这里不能学 `act.summon` 的"查不到就不召唤"：部署是相位机走出 deploy 的唯一出路，
+ * 静默不上场会让 `checkDeploy` 校验过的名数与实际上场数对不上，
+ * 那一方就带着一份少了英雄的状态继续跑。退化的代价只是"英雄没有卡面"，
+ * 而那正是 M2~M5 那一大批不带卡表的测试一直以来的形态。
+ *
+ * ── ★ 上场即**一条新的命的开始**（M6：复活重部署）★ ───────────────────────
+ * 阵亡的英雄进复燃泉时，`damage` / `enchantments` / `flags` 全都还是它死时那一刻的样子
+ * （`resolve/deaths.ts` 只搬区域、只写 `respawnAt`）。所以清理落在**回场这一步**，
+ * 而不是入泉那一步：`base`/`tags` 的整份覆盖本来就在这里，"新的一条命长什么样"
+ * 于是只有这一个出处；入泉时清则要跨两个文件才拼得出答案，而且泉里那段时间的实体
+ * 会是一个"满血却躺在泉里"的、谁都读不懂的中间态。
+ *   - `damage = 0` —— **不清就等于复活当场再死**：`tags.health` 被上面那段整份覆盖成
+ *     卡面血量，而 `damage` 还压着致死的那一笔，流水线第 ⑤ 步立刻又判它死一次。
+ *   - `enchantments = []` + 标志位复位 —— 上一条命挂上的加成/圣盾/滞光/沉默不跟着过来。
+ *     方向与 §11.3 一致：阵亡是**纯损失**（缺席一整回合 + 该色牌锁定），
+ *     留着 `permanent` 附魔会让"死一次"变成一件带收益的事。标志位复位到 `NO_FLAGS`
+ *     而不是某个卡面值，是因为 `CardData` 压根没有 flags 这一项 —— 卡面上的标志位恒为"无"
+ *     （与 `handlers/board.ts` 的 `spawnOnSlot` 给新实体写 `NO_FLAGS` 同一个道理）。
+ *   - `firedOnce` **保留不清**。它记的是"这张卡的这一条 `once` 触发器已经烧过了"，
+ *     跟着**实体身份**走 —— 复活用的是同一个实体 id、同一张卡，不是新建实体
+ *     （`act.summon` 那条路才新建）。清掉等于让阵亡**刷新**一次性能力，
+ *     那是把惩罚变成收益。规范没写这一条，取舍与理由留在这里。
+ *   - `playOrder` 由 `placeOnSlot` 重新取号：回场的英雄按**这一次**上场的时刻排进
+ *     触发顺序（时序规则 1），而不是沿用上一条命的位置。它同时是"上过场没有"的判别式
+ *     （{@link NEVER_DEPLOYED}），所以名额**必须**在取号之前算完 ——
+ *     {@link deployCountFor} 由 `checkDeploy` 在本函数之前调用，这一条天然成立。
+ *
+ * 三件清理**不分首次/复活**：首次部署的英雄这三项本来就是空的（`state/create.ts` 建出来
+ * 就是零值），少一个分支就少一处"判错了会怎样"。
  */
 function applyDeploy(
   state: GameState,
   picks: readonly [readonly DeployPick[], readonly DeployPick[]],
+  cards: CardLookup | undefined,
 ): null {
   for (const player of PLAYER_IDS) {
     for (const pick of picks[player]) {
@@ -489,6 +587,16 @@ function applyDeploy(
       if (!placeOnSlot(state, hero, player, pick.slot)) {
         continue;
       }
+      const data = cards?.(hero.cardId);
+      if (data !== undefined) {
+        hero.base = createTagValues(data.tags);
+        hero.tags = createTagValues(data.tags);
+      }
+      // 上一条命的残留一律不跟过来（见上面的 ★；`firedOnce` 是唯一例外）。
+      hero.damage = 0;
+      hero.enchantments = [];
+      hero.baseFlags = NO_FLAGS;
+      hero.flags = NO_FLAGS;
       // 上了场就不再是"等待复活"的状态（v2.1 §11.3：respawnAt 只在泉里有意义）。
       hero.respawnAt = null;
       emitEvent(state, {
@@ -536,8 +644,8 @@ function applyDeploy(
  *       失败形态由 `resolve/__tests__/resolve.test.ts` 的「展不开的脚本引用静默跳过」钉着。
  *       现成的做法照抄 `testkit` 的 `castCard`：M4/E6 起单卡测试跑的就是
  *       `pushActs(draft, card.script.play ?? [], ctx)` 这一条内联的路（testkit/index.ts:638）。
- *       接线上还要补一件事：本函数目前收不到 `deps`，{@link bookkeepIntent} 得把
- *       {@link runIntentBookkeeping} 手里那份 `TriggerDeps` 传下来（`scripts` 就在里面）。
+ *       接线上还剩一小步：{@link bookkeepIntent} 现在**已经**拿着那份 `TriggerDeps`
+ *       （M6 的英雄卡面把它传下来了），只需再往本函数的形参上递一层（`scripts` 就在里面）。
  * 接入点就是本函数末尾返回的那个 `acts` 数组：把 `act.move` 与卡的 `play` 段一起放进去，
  * 顺序即执行顺序（`resolve/push.ts` 负责那次 LIFO 反转）。
  */
@@ -845,19 +953,26 @@ export function runIntentBookkeeping(
   intent: Exclude<Intent, { t: "respond" }>,
   deps: TriggerDeps,
 ): void {
-  runStep(state, deps, () => bookkeepIntent(state, intent));
+  runStep(state, deps, () => bookkeepIntent(state, intent, deps));
 }
 
-/** {@link runIntentBookkeeping} 的分发体：按意图类型改状态并交出要压栈的动作。 */
+/**
+ * {@link runIntentBookkeeping} 的分发体：按意图类型改状态并交出要压栈的动作。
+ *
+ * `deps` 从上面那层原样传进来 —— M6 起 {@link applyDeploy} 要**卡表**才写得出英雄的
+ * 卡面（见那里的 ★）。M3 时本函数收不到它，那正是 {@link playCard} 上标着的
+ * 「接战吼还得先把 deps 传下来」那条待办的一半。
+ */
 function bookkeepIntent(
   state: GameState,
   intent: Exclude<Intent, { t: "respond" }>,
+  deps: TriggerDeps,
 ): StepActs | null {
   switch (intent.t) {
     case "mulligan":
       return applyMulligan(state, intent.toss);
     case "deploy":
-      return applyDeploy(state, intent.picks);
+      return applyDeploy(state, intent.picks, deps.cards);
     case "play_card": {
       const card = getEntity(state, intent.card);
       // 校验已保证它存在；`getEntity` 的 `undefined` 分支不用 `!` 抹掉（本仓硬约束）。

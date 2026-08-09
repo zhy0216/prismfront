@@ -46,7 +46,9 @@ export interface CreateInitialStateOptions {
    * engine 只收已经合法的 id 列表。
    *
    * 落在 `fountain`（复燃泉）区，`respawnAt = 1` ⇒ 从 r1 起可在 deploy 阶段部署。
-   * 「一回合部署几名」由 `rules.heroes.deploySchedule` 决定（M6 实现）。
+   * 「一回合部署几名」由 `rules.heroes.deploySchedule` 决定（`rules/phase.ts` 的
+   * `deployCountFor`：`[2, 1]` = r1 两名、r2 第三名）——建局把三名一次全放进泉，
+   * **排期是消费侧的事**，这里不预先分组。
    */
   heroes?: readonly [readonly CardId[], readonly CardId[]];
   /** 本局钉住的 bundle 标识（IR v1 §2.1 / §6.2）。M2 无卡表，默认空串。 */

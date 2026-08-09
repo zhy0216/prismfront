@@ -22,7 +22,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // M2 的骨架是「校验 → clone → pushAct → resolve → 回执」。M3 保持它，只把中间换成：
 //
-//   ① 校验        `checkIntent(state, intent)` —— 只读，被拒即返回原因码
+//   ① 校验        `checkIntent(state, intent, deps.cards)` —— 只读，被拒即返回原因码
 //   ② 记账 + 压栈  `runIntentBookkeeping(draft, intent)` —— `rules/phase.ts`
 //   ③ 结算        `resolve(draft, deps)` —— 六步流水线（框架 §4.1）
 //   ④ 推进自动相位 `advancePhases(draft, deps)` —— combat / round_end / round_start
@@ -38,15 +38,30 @@
 // **运行时超集**）冻结 —— 这正是"运行时超集只由引擎自己生成，永不来自外部输入"这条
 // UGC 安全边界的用法：**玩家发来的是 id 与格号，不是 IR 节点**，节点由引擎按校验通过
 // 的 id 现造。翻译本身在 `phase.ts`，本文件只负责校验与外壳。
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// M6：校验开始读**卡表**（色门）
+// ═══════════════════════════════════════════════════════════════════════════
+// M3~M5 的 `checkIntent` 只读状态。色门（v2.1 §11.4）要问"这张牌是什么颜色"与
+// "场上那几个实体是不是英雄"，两件事都只有卡面答得上来，于是 `deps.cards` 一路递到
+// `checkPlayCard`。校验的"只读状态、被拒时连 clone 都没发生"这条性质不受影响 ——
+// 卡表是**只读查询**（`eval/context.ts` 的 `CardLookup`）。
+// 色门的判据与结构化的拒绝原因都在本文件末尾一节，M7 的 legalActions 复用那里的
+// {@link lockedColorsOf}，不要再判第二遍。
 
+import type { Color } from "@prismfront/ir";
+import type { CardLookup } from "../eval/index.ts";
+import { isHero } from "../eval/index.ts";
 import type { GameEvent } from "../events/index.ts";
 import { DEFAULT_DEPS } from "../handlers/index.ts";
 import type { ResolveDeps } from "../resolve/index.ts";
 import { InvalidChoiceError, resolve, resume } from "../resolve/index.ts";
 import type { EntityData, GameState, PlayerId } from "../state/index.ts";
 import {
+  boardEntities,
   cloneState,
   getEntity,
+  isLethal,
   isSlotEmpty,
   isValidSlot,
   PLAYER_IDS,
@@ -105,7 +120,10 @@ export function apply(
     return { ok: false, code: "awaiting_input" };
   }
 
-  const rejection = checkIntent(state, intent);
+  // 校验要**卡表**：色门读的是 `card.data.colors`（v2.1 §11.4），而"这个实体是不是英雄"
+  // 同样只有卡面答得上来。只递 `deps.cards` 而不是整份 `deps` —— 校验既不执行动作
+  // 也不展开脚本，收窄依赖才看得出它确实只读卡面（同 `resolve/deps.ts` 的 `TriggerDeps` 取舍）。
+  const rejection = checkIntent(state, intent, deps.cards);
   if (rejection !== null) {
     return { ok: false, code: rejection };
   }
@@ -178,6 +196,7 @@ function applyRespond(
 function checkIntent(
   state: GameState,
   intent: Exclude<Intent, { t: "respond" }>,
+  cards: CardLookup | undefined,
 ): IllegalReason | null {
   switch (intent.t) {
     case "concede":
@@ -193,7 +212,7 @@ function checkIntent(
 
     case "play_card": {
       const gate = checkActionGate(state, intent.player);
-      return gate ?? checkPlayCard(state, intent.player, intent.card, intent.slot);
+      return gate ?? checkPlayCard(state, intent.player, intent.card, intent.slot, cards);
     }
 
     case "pass":
@@ -218,10 +237,14 @@ function checkActionGate(state: GameState, player: PlayerId): IllegalReason | nu
 }
 
 /**
- * `play_card` 的负载校验：牌在自己手里 → 水晶够 → 格位可用。
+ * `play_card` 的负载校验：牌在自己手里 → **色门**开着 → 水晶够 → 格位可用。
  *
- * 顺序有意为之：**先判归属再判资源**。反过来的话，一个乱填 id 的客户端会先收到
- * `not_enough_crystals`，那条原因码对排错完全是误导。
+ * 顺序有意为之：**先判归属，再判这张牌本身打不打得出，最后才判资源与落点**。
+ *   - 归属在最前：一个乱填 id 的客户端若先收到 `not_enough_crystals`，
+ *     那条原因码对排错完全是误导。
+ *   - 色门排在水晶之前：色门是**这张牌现在根本打不出**（v2.1 §11.4，攒多少水晶、
+ *     换哪个格子都不会变），而水晶是攒得出来的。两条同时不满足时报更根本的那一条，
+ *     客户端也才好据此把牌置灰（`color_locked` 的文档注释）。
  *
  * 费用取 `card.tags.cost` 即**生效费用**（派生值），于是 M5 的减费光环/附魔自动生效。
  * M2/M3 没有卡表，`tags.cost` 恒为 0 ⇒ 所有牌免费 —— 这不是 bug 而是"没有卡面数据"
@@ -232,6 +255,7 @@ function checkPlayCard(
   player: PlayerId,
   cardId: number,
   slot: number,
+  cards: CardLookup | undefined,
 ): IllegalReason | null {
   const card = getEntity(state, cardId);
   if (card === undefined) {
@@ -239,6 +263,9 @@ function checkPlayCard(
   }
   if (card.zone !== zoneKey(player, "hand")) {
     return "wrong_zone";
+  }
+  if (lockedColorsOf(state, player, card, cards).length > 0) {
+    return "color_locked";
   }
   if (playerData(state, player).crystals < card.tags.cost) {
     return "not_enough_crystals";
@@ -250,6 +277,88 @@ function checkPlayCard(
     return "slot_occupied";
   }
   return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 色门（v2.1 §11.4）
+// ═══════════════════════════════════════════════════════════════════════════
+// 规则一句话：**这张牌的每个颜色，都要有一名己方存活在场的英雄提供**。
+// 融合卡（`colors` 长度 2）不是特例 —— 它天然落在同一条判断上，两个颜色各自
+// 要有一名英雄，且**可以是两名不同的英雄**（一名红英雄 + 一名蓝英雄就能打红蓝融合卡）。
+// 所以这里没有、也不该有"融合卡"这个分支。
+//
+// ★ 色门只看**颜色**，不看**归属** ★
+// 构筑规则是英雄专属卡（v2.1 §11.4b，决策 #11）：每张卡在构筑层归属一名英雄。
+// 但那是**组牌**的约束，打出限制一个字没改。所以本段代码只读 `data.colors`，
+// 绝不读那个归属字段（IR 的 `CardData` 至今也没有它）。危险在于 PF1 每色恰好一名英雄，
+// 「所属英雄在场」与「同色英雄在场」结果永远相同，写成同一条判断照样全绿 ——
+// 等英雄扩池（同色多名）第一天就炸，且表现为"某些牌莫名打不出"这种很难往回追的症状。
+// 反面断言在 `__tests__/heroes.test.ts` 第 6 节（同色两名英雄，死一名照样打得出）。
+
+/**
+ * 打出 `card` 还**缺**哪些颜色的英雄（v2.1 §11.4）。空数组 = 门开着，可以打。
+ *
+ * ── 为什么返回颜色列表而不是一个 boolean ─────────────────────────────────────
+ * `IllegalReason` 是稳定机器串、不许塞动态内容（`intent.ts`），所以"缺哪个颜色"
+ * 这条信息在 `apply()` 的回执里表达不出来。而 M7 的 `legalActions` 恰恰需要它：
+ * 客户端要把手牌逐张置灰并说明理由（"缺一名蓝色英雄"），一张一张地试 `apply`
+ * 既拿不到理由也白跑一遍克隆。于是**结构化的那一份从这里出**，
+ * `checkPlayCard` 只是把它退化成一个原因码，两边不会各判一次。
+ *
+ * 返回的顺序 = `card.data.colors` 的声明顺序，于是同一张牌的输出是稳定的
+ * （下发给客户端、进快照都不会因为遍历顺序抖动）。
+ *
+ * ── 退化口径：查不到卡面 ⇒ **不设门** ──────────────────────────────────────
+ * `cards` 缺省（`DEFAULT_DEPS` 就没有卡表）或查不到这张卡 ⇒ 颜色列表为空 ⇒ 恒放行。
+ * 与 `eval/context.ts` 的 `NO_CARDS` 同一条语义：这不是"出错"而是"引擎不认识任何具体卡"。
+ * 这条口径同时是 M2~M5 那一大批不带卡表的测试**一条都不受色门影响**的原因 ——
+ * 反过来若定成"查不到就锁住"，那些测试会以"某条 `play_card` 突然非法"的形式集体红，
+ * 而真正的错因（没接卡表）离症状很远。
+ */
+export function lockedColorsOf(
+  state: GameState,
+  player: PlayerId,
+  card: EntityData,
+  cards: CardLookup | undefined,
+): Color[] {
+  const wanted = cards?.(card.cardId)?.colors ?? [];
+  if (wanted.length === 0) {
+    return [];
+  }
+  const open = openColorsOf(state, player, cards);
+  return wanted.filter((color) => !open.includes(color));
+}
+
+/**
+ * 某方**当前开着**的颜色 = 己方存活在场的英雄们各自的 `data.colors` 之并。
+ *
+ * 「存活在场」两个条件缺一不可（v2.1 §11.3/§11.4）：
+ *   - **在场** —— 站在自己那一行战线上。`boardEntities` 扫的是 `state.slots`，
+ *     于是躺在**复燃泉**里等复活的英雄自动不算数，这正是"阵亡缺席期间该色牌全部锁定"
+ *     那句话的全部实现：没有一行代码去读 `respawnAt`，锁不锁只由"它现在站没站着"决定。
+ *   - **存活** —— 判据用 `isLethal`，与死亡结算**同一个谓词**（引擎里"死"只有一个定义）。
+ *     绝大多数时候流水线已经把致死的实体搬走了，但第 ⑤ 步（死亡）在第 ⑥ 步（光环重算）
+ *     之前（`resolve/resolve.ts`），所以"血量刚被光环拿掉、还没来得及结算"这个瞬间是存在的；
+ *     M7 的投影若在那种状态上问色门，答案要与流水线一致。
+ *
+ * 英雄的判据走 `eval/context.ts` 的 {@link isHero} —— 全引擎唯一的一处。
+ * 这里**不**顺手写成 `cards(...)?.kind === "hero"`：那就是第二份实现，
+ * 而"死亡去向那边认它是英雄、色门这边不认"这种半边分叉最难查。
+ * 顺带一条推论：一个红色**随从**站在场上开不了红门，它不是英雄。
+ */
+function openColorsOf(state: GameState, player: PlayerId, cards: CardLookup | undefined): Color[] {
+  const open: Color[] = [];
+  for (const entity of boardEntities(state, player)) {
+    if (!isHero(cards, entity) || isLethal(entity)) {
+      continue;
+    }
+    for (const color of cards?.(entity.cardId)?.colors ?? []) {
+      if (!open.includes(color)) {
+        open.push(color);
+      }
+    }
+  }
+  return open;
 }
 
 /**

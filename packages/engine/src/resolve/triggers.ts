@@ -281,11 +281,15 @@ const DEATHRATTLE_KEY = "deathrattle";
  * > engine 内部一律当 trigger 处理。                        —— IR v1 §4.1 原文
  *
  * ★ **展开只在这一处发生**。于是「亡语」在引擎里不是一个概念：
- *   - `deaths.ts` 不需要亡语排队逻辑（它只发 `unit_died`，本模块照常匹配）；
+ *   - `deaths.ts` 不需要亡语排队逻辑（它只发死亡事件，本模块照常匹配）；
  *   - 框架 §4.1 时序规则 3 的「亡语按 `playOrder` 排队」自动由 {@link sortTriggers} 兑现；
  *   - `zone: "graveyard"` 正是"死后还能触发"的**全部**机制 —— 单位已经躺进墓地了
- *     （`deaths.ts` 的 `sendToGraveyard` 先搬区、后发事件），所以区域判定通得过。
+ *     （`deaths.ts` 的 `sendOffBoard` 先搬区、后发事件），所以区域判定通得过。
  *   若哪天有人在别处写 `if (亡语)`，那是重复实现，删掉它。
+ *
+ * ⚠ 这条糖对**英雄**永不成立（v2.1 §11.3）：英雄阵亡发的是 `hero_died` 而不是
+ *   `unit_died`，且它躺进的是 `fountain` 而不是 `graveyard` —— 两把锁各自都足以挡住。
+ *   要给英雄写"阵亡时…"，订阅 `hero_died`。
  */
 function deathrattleTriggerOf(deathrattle: readonly Act[]): Trigger {
   return {

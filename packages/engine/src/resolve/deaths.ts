@@ -9,7 +9,22 @@
 // M2 的完成标志是跑通「抽牌 → 放单位到格 → 手动 strike → 死亡」（里程碑 M2 第 5 项），
 // 死亡就在这条链的末端。留给 M5 的只有一样：**亡语的匹配**，而那件事根本不在本文件 ——
 // 亡语是 `{on:"unit_died", filter:{target:SELF}, zone:"graveyard"}` 的糖（IR v1 §4.1），
-// 本文件把 `unit_died` 事件交给 `triggers.ts`，排队与入栈由那里按时序规则 1 完成。
+// 本文件把死亡事件交给 `triggers.ts`，排队与入栈由那里按时序规则 1 完成。
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ M6 往本文件加的第四件事：英雄阵亡发 `hero_died`，**不发** `unit_died` ★
+// ═══════════════════════════════════════════════════════════════════════════
+// v2.1 §11.3 明写「触发器需明确区分两者」。理由是**既有的卡会被误触发**：
+// `{on: "unit_died"}`（「每当一个单位死亡…」）从 M5 起就写得出来了，而英雄是每局
+// 只有 3 名、死了还会回来的角色 —— 把它算进单位死亡，一整类计数/收益卡的读数会
+// 凭空多出几次，且多出的次数随对局进程漂移（英雄死得越多漂得越远），事后极难归因。
+//
+// 两个事件名因此是**互斥**的：一个死者只发其中一个，判据与"去哪个区"共用同一条
+// （`eval/context.ts` 的 `isHero`，见 {@link sendOffBoard}）—— 事件名与去向由同一个
+// 谓词决定，就不可能出现"进了泉却发着 unit_died"这种半边的分叉。
+//
+// 连带的一个结果，是**规范的意图而不是漏洞**：亡语对英雄**永不响**，而且双重上锁 ——
+// 事件名不是 `unit_died`，区域也不是 `graveyard`（它躺在 fountain 里）。
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // ★ M5/T3 往本文件加的两件事：`while_source_alive` 的剥离 + 判死前的光环重算 ★
@@ -91,6 +106,8 @@
 // 那条同样禁止，防线是 `auras.ts` 的 `AuraRandomError`（L3 的运行期兜底），不在这里重复。
 
 import type { Duration, EntityId, ZoneName } from "@prismfront/ir";
+import type { CardLookup } from "../eval/index.ts";
+import { isHero } from "../eval/index.ts";
 import { emitEvent } from "../events/index.ts";
 import type { GameState, PlayerId, ZoneKey } from "../state/index.ts";
 import {
@@ -171,35 +188,90 @@ function removeFromZone(state: GameState, key: ZoneKey, id: EntityId): void {
 }
 
 /**
- * 把一个致死单位移出场并送进墓地，发 `unit_died`。
- *
- * 进**谁的**墓地：`entity.owner`。理由是 IR v1 §3.4 的 `act.move.side` 默认值就是
- * `"owner"` —— 被 `act.steal` 偷走的单位死后回到原主的墓地，牌张归属才不会因为
- * 一次偷取而永久转移（否则牌库/墓地的记账会随控制权漂移）。
- *
- * ⚠ M6 的英雄分支就加在这里：`kind: "hero"` 的实体不进墓地，而是移入 `"fountain"`、
- *   置 `respawnAt = round + 1 + rules.heroes.respawnDelay`、发 `hero_died` 而**不发**
- *   `unit_died`（v2.1 §11.3 明确要求触发器能区分两者）。M2 判不了 `kind`（没有卡表，
- *   `state/entity.ts` 只存 `cardId`），所以这里不写一个恒假的 `isHero()` 占位分支 ——
- *   一个永远走不到的分支既测不了也会误导读者，注释比空分支诚实。
+ * 尸体待的地方。两处要用它：{@link sendOffBoard} 的去向，
+ * 以及 {@link isSourceGone} 判「来源还在不在」。engine 只 import ir 的**类型**，值本地写。
  */
-function sendToGraveyard(state: GameState, unit: LethalUnit): void {
+const GRAVEYARD: ZoneName = "graveyard";
+
+/**
+ * 复燃泉（v2.1 §11.3）：英雄阵亡后待的地方，与 {@link GRAVEYARD} 在本文件里是**同级**的
+ * 两个去向 —— 它们各自出现在同样的两处（去向 + 「来源还在不在」）。
+ */
+const FOUNTAIN: ZoneName = "fountain";
+
+/**
+ * 阵亡英雄的**可再部署回合**（v2.1 §11.3，公式由 IR 的 `RulesConfig.heroes.respawnDelay`
+ * 注释给定）：`当前回合 + 1 + respawnDelay`。
+ *
+ * 默认 `respawnDelay = 1` ⇒ r3 阵亡的英雄 `respawnAt = 5`。而 `rules/phase.ts` 的
+ * `beginRound` 是**先** `round += 1` **再**判 `needsDeploy`，`deployableHeroes` 的判据是
+ * `respawnAt <= round` ⇒ 它在 r5 的 deploy 相位就能上场，**恰好缺席 r4 一整回合**。
+ * 缺席两回合（`+2+delay`）与当场就能回来（`+delay`）是这条公式仅有的两种错法，
+ * 而它们都要跨好几个回合才显形 —— 所以公式只写在这一处，别在别处再算一遍。
+ */
+function respawnRoundOf(state: GameState): number {
+  return state.round + 1 + state.rules.heroes.respawnDelay;
+}
+
+/**
+ * 把一个致死单位移出场，送去它该去的**安息区**：随从 / 衍生物 → 墓地，
+ * **英雄 → 复燃泉**（v2.1 §11.2/§11.3）。随后发死亡事件：随从发 `unit_died`，
+ * 英雄发 `hero_died`。
+ *
+ * 进**谁的**区：一律 `entity.owner`。理由是 IR v1 §3.4 的 `act.move.side` 默认值就是
+ * `"owner"` —— 被 `act.steal` 偷走的单位死后回到原主的墓地，牌张归属才不会因为
+ * 一次偷取而永久转移（否则牌库/墓地的记账会随控制权漂移）。英雄同理：偷来的英雄
+ * 阵亡后回**原主**的泉，不然它会在对手那边复活。
+ *
+ * ── ★ 英雄那一支：区别**只在去向**，别的一律同规则 ★ ──────────────────────
+ * 英雄占格、有攻血、按方向出手、可被打，走的是与随从**完全同一套**的判死
+ * （{@link collectLethalUnits} 只扫 `state.slots`）与同一套出手/受伤管线
+ * （`rules/combat.ts` 也只扫 `state.slots`）。所以这个函数里除了目的区之外
+ * 一行分叉都没有，判据是**卡面 kind**、且只有 `eval/context.ts` 的 {@link isHero} 一处。
+ * 不接卡表 ⇒ `isHero` 恒假 ⇒ 英雄按随从进墓地：那是"引擎不认识任何具体卡"的正确退化，
+ * 也正是 M2~M5 那一大批测试一直跑的形态（见 `isHero` 的说明）。
+ *
+ * `playOrder` **保留不清**：亡语要按它排队（时序规则 3），而亡语是在实体已经躺进
+ * 墓地之后才排的（IR v1 §4.1 的 `zone: "graveyard"`）。
+ *
+ * ── ★ 事件名跟着去向一起分叉（M6：`hero_died` vs `unit_died`）★ ─────────────
+ * 为什么两个名字必须互斥、以及"亡语对英雄永不响"为什么是意图，见文件头的 M6 那一节。
+ * 判据是同一个 `isHero`，**只算一次**：算两次就给了"进了泉却发着 `unit_died`"
+ * 这种半边分叉一个存在的机会。
+ *
+ * `hero_died` 比 `unit_died` 多一个 `respawnAt`（{@link respawnRoundOf}），
+ * 而同一个数**同时写进实体**。两处同写不是冗余：事件流与状态是引擎的两份输出
+ * （框架 §3.2/§3.3），客户端拿到的是事件流并据此重放自己那份状态（M7 投影）——
+ * 两边各说一个数，服务端与客户端就会在"这名英雄哪一回合回来"上分叉，
+ * 而这种分叉要等好几个回合后的 deploy 相位才显形。
+ *
+ * 复活链路的**消费**侧在 `rules/phase.ts`：`deployCountFor` 给到期的英雄一个不受排期
+ * 约束的名额，`applyDeploy` 在它重新上场时把上一条命的 `damage` / `enchantments` /
+ * 标志位清掉。本函数因此**什么都不清**（除了区域与 `respawnAt`）—— 清理只有那一处，
+ * 泉里那段时间的实体保持它死时的样子。
+ */
+function sendOffBoard(state: GameState, unit: LethalUnit, cards: CardLookup | undefined): void {
   const entity = getEntity(state, unit.id);
   if (entity === undefined) {
     return;
   }
+  const hero = isHero(cards, entity);
   const row = state.slots[unit.controller];
   if (row[unit.slot] === unit.id) {
     row[unit.slot] = null;
   }
   removeFromZone(state, entity.zone, unit.id);
-  const grave = zoneKey(entity.owner, "graveyard");
-  state.zones[grave].push(unit.id);
-  entity.zone = grave;
+  const rest = zoneKey(entity.owner, hero ? FOUNTAIN : GRAVEYARD);
+  state.zones[rest].push(unit.id);
+  entity.zone = rest;
   entity.slot = null;
-  // `playOrder` **保留不清**：亡语要按它排队（时序规则 3），而亡语是在实体已经躺进
-  // 墓地之后才排的（IR v1 §4.1 的 `zone: "graveyard"`）。
-  emitEvent(state, { name: "unit_died", target: unit.id, slot: unit.slot });
+  if (!hero) {
+    emitEvent(state, { name: "unit_died", target: unit.id, slot: unit.slot });
+    return;
+  }
+  const respawnAt = respawnRoundOf(state);
+  entity.respawnAt = respawnAt;
+  emitEvent(state, { name: "hero_died", target: unit.id, slot: unit.slot, respawnAt });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -209,20 +281,26 @@ function sendToGraveyard(state: GameState, unit: LethalUnit): void {
 /** 「来源存活期间有效」那一档存续期。engine 只 import ir 的**类型**，值本地写字面量。 */
 const SOURCE_BOUND: Duration = "while_source_alive";
 
-/** 尸体待的地方。判「来源还在不在」就看它有没有躺进这里。 */
-const GRAVEYARD: ZoneName = "graveyard";
-
 /**
  * 附魔的来源是否已经**不在了**（`while_source_alive` 的剥离判据）。
  *
- * 判据取「实体表里查不到，或已经躺进墓地」，而不是「本波刚死的那几个」：
- * 后者漏掉一种真实情形 —— **来源在挂上这条附魔时就已经死了**
+ * 判据取「实体表里查不到，或已经躺进**安息区**（墓地 / 复燃泉）」，而不是
+ * 「本波刚死的那几个」：后者漏掉一种真实情形 —— **来源在挂上这条附魔时就已经死了**
  * （亡语里给别人挂一条 `while_source_alive` 的附魔，`act.buff` 的 `source` 取 `ctx.self`，
  * 那时 SELF 已经躺在墓地里了，见 `handlers/tags.ts`）。那条附魔按前者判永远剥不掉。
  *
+ * ── ★ 为什么复燃泉也算「不在了」（M6 补入）★ ──────────────────────────────
+ * {@link sendOffBoard} 起英雄阵亡进的是 fountain **而不是**墓地。只认墓地的话，
+ * 一名死掉的英雄给别人挂的 buff 会**永远剥不掉** —— 而且症状只出现在带卡表的对局里
+ * （不接卡表时英雄照旧进墓地，见 `isHero` 的退化口径），非常难往回追。
+ * 泉里躺着的另一种实体是**还没首次部署**的英雄，它从没上过场、不可能是任何附魔的来源
+ * （`AttachedEnchantment.source` 取的是 `ctx.self`，而它一次都没当过 SELF），
+ * 所以这一支不会误伤谁。
+ *
  * **不看"在不在场上"**：被弹回手牌 / 洗回牌库的单位仍然活着（IR v1 §2.3 的原文是
  * 「来源**存活**期间有效」），此时附魔应当留着。改成看 board 会让一次弹回手牌
- * 顺手清掉一堆本该留下的 buff。
+ * 顺手清掉一堆本该留下的 buff —— 这也正是不能把上面那条写成「不在 board 上就算没了」
+ * 的原因：那样写虽然一并覆盖了 fountain，却会连手牌那条一起做错。
  *
  * 悬空 id（`getEntity` 给 `undefined`）视为已不在 —— 与 `state/queries.ts` 对悬空 id
  * 的一贯处理一致：那是常态而不是错误。`act.buff` 在取不到 SELF 时写的哨兵 `0`
@@ -230,7 +308,11 @@ const GRAVEYARD: ZoneName = "graveyard";
  */
 function isSourceGone(state: GameState, source: EntityId): boolean {
   const entity = getEntity(state, source);
-  return entity === undefined || zoneOf(entity) === GRAVEYARD;
+  if (entity === undefined) {
+    return true;
+  }
+  const zone = zoneOf(entity);
+  return zone === GRAVEYARD || zone === FOUNTAIN;
 }
 
 /**
@@ -291,7 +373,8 @@ function settleBases(state: GameState): void {
  * 对局已结束时**直接返回**：`over` 之后没有后续时序可言，继续判死只会把已经归零的
  * base 反复算进来。
  *
- * 与时序规则 2 的接缝：本函数把每一波的 `unit_died` 交给 {@link collectOrderedTriggers}，
+ * 与时序规则 2 的接缝：本函数把每一波的死亡事件（`unit_died` / `hero_died`）
+ * 交给 {@link collectOrderedTriggers}，
  * 亡语与「每当有单位死亡」的触发器**只入栈不执行** —— 它们要等下一次
  * `stack.pop()` 才开始，正是规则 2 说的「B 要等 A 这一步的死亡结算做完才开始」。
  * ★ 入栈本身推迟到不动点循环**之后**做一次（见文件头第 3 条）：逐波入栈会被 LIFO
@@ -324,9 +407,11 @@ function settleBases(state: GameState): void {
  * 也因此「四种存续期不分叉」这句话只在 `rules/phase.ts` 的三个剥离点之间成立：
  * `while_source_alive`（本文件）与它们共用「先剥再重算」这半条，但**排队时机**不同。
  *
- * `deps` 有两个去处：{@link collectOrderedTriggers}（亡语就是订阅 `unit_died` 的触发器）与
- * `refreshAuras`（光环与附魔的定义都在 bundle 里）。它**必填**，理由与那两个函数逐字相同 ——
- * 忘了传就是"亡语静默不响 / 加成静默归零"，没有任何症状可循。
+ * `deps` 有三个去处：{@link collectOrderedTriggers}（亡语就是订阅 `unit_died` 的触发器）、
+ * `refreshAuras`（光环与附魔的定义都在 bundle 里），以及 M6 起 {@link sendOffBoard} 要的
+ * **卡表**（判 `kind:"hero"` 决定去墓地还是去复燃泉、发哪一个死亡事件名）。
+ * 它**必填**，理由与前两个函数逐字相同 —— 忘了传就是
+ * "亡语静默不响 / 加成静默归零 / 英雄误入墓地并发错事件名"，没有任何症状可循。
  * 不需要 bundle 的调用点传 `handlers/index.ts` 的 `NO_DEPS`。
  */
 export function processDeaths(state: GameState, deps: TriggerDeps): DeathReport {
@@ -351,10 +436,10 @@ export function processDeaths(state: GameState, deps: TriggerDeps): DeathReport 
     const mark = state.eventLog.length;
     // 先收集齐再一起搬 —— "批量"是"同归于尽"能成立的全部原因。
     for (const unit of wave) {
-      sendToGraveyard(state, unit);
+      sendOffBoard(state, unit, deps.cards);
       died.push(unit.id);
     }
-    // 本波产出的 `unit_died` 逐波匹配 + 排序（亡语就是其中一种，见文件头）——
+    // 本波产出的死亡事件逐波匹配 + 排序（亡语就是其中一种，见文件头）——
     // ★ 只匹配、只排序，**不压栈**：匹配要在**本波的盘面**上做，入栈则必须等整次结算完。
     for (const trigger of collectOrderedTriggers(state, state.eventLog.slice(mark), deps)) {
       queued.push(trigger);

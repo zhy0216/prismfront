@@ -23,6 +23,8 @@
 //               ★ 全 IR 唯一的例外 `num.slot_index → -1` 也在那张表上单列一行。
 //   context.ts  求值环境（`GameState` + `CtxBindings` + 卡表）、侧别换算、
 //               `assertNever`、以及**唯一的 RNG 入口** `rollInt`。
+//               M6 起还有**唯一的英雄判据** `isHero` —— 它只收一张卡表，
+//               于是相位机与死亡结算（手里没有 `EvalEnv`）也能共用同一个定义。
 //   sel.ts      `single`（"恰好一个实体"的共同判据）与 `evalEntities`。
 //
 // ═══════════════════════════════════════════════════════════════════════════
@@ -62,6 +64,7 @@ export {
   cardDataOf,
   controllerOfSelf,
   createEvalEnv,
+  isHero,
   NO_CARDS,
   NO_ENCHANTMENTS,
   playerEntityId,

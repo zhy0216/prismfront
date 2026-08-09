@@ -30,6 +30,7 @@ import type {
   ActNumField,
   CardData,
   CardId,
+  CardKind,
   EnchantId,
   Enchantment,
   EntityId,
@@ -179,6 +180,39 @@ export function withIt(env: EvalEnv, it: EntityId): EvalEnv {
 /** 取一个实体的卡面数据（查不到 → `undefined`）。 */
 export function cardDataOf(env: EvalEnv, entity: EntityData): CardData | undefined {
   return env.cards(entity.cardId);
+}
+
+/**
+ * 「英雄」这一档 {@link CardKind}（v2.1 §11.2）。engine 只 import ir 的**类型**，
+ * 值本地写字面量（架构 §2.2 禁令 1），与 `resolve/deaths.ts` 的 `GRAVEYARD` 同一条规矩。
+ */
+const HERO_KIND: CardKind = "hero";
+
+/**
+ * 一个实体是不是**英雄**（v2.1 §11.2 的 `kind: "hero"`）—— ★ 全引擎唯一的判据。
+ *
+ * ── 为什么必须只有一处实现 ────────────────────────────────────────────────
+ * M6 有三件事各自要问这句话：死亡去向（英雄进复燃泉不进墓地）、色门（`play_card`
+ * 要数己方在场英雄的颜色）、选择器词汇分化（`*_MINIONS` 排除英雄）。
+ * 三处各判各的，就会出现"死亡那边认它是英雄、色门那边不认"这类只在半边显形的分叉；
+ * 而 M6 必守点点名的那个坑（归属 ≠ 色门）正是同源问题 —— PF1 每色恰好一名英雄，
+ * 两种判法结果永远相同，等英雄扩池第一天才炸，且炸在数据侧很难往回追。
+ *
+ * ── 为什么收 {@link CardLookup} 而不是 {@link EvalEnv} ─────────────────────
+ * 问这句话的三方里只有求值器手里有环境；死亡结算（`resolve/deaths.ts`）与相位机
+ * （`rules/phase.ts`）手里只有 `resolve/deps.ts` 的 `TriggerDeps`。收窄到"一张卡表"
+ * 这一份依赖，三处才能共用同一个实现，而不是为了共用去到处传一个用不上的 `EvalEnv`。
+ *
+ * `cards` 允许是 `undefined`（`TriggerDeps.cards` 本来就是可选的）⇒ 恒 `false`。
+ * 这与 `cond.is_kind` 的退化口径**同源**：查不到卡就无法确认它是英雄，于是不是
+ * （见 {@link NO_CARDS}）。不接卡表的形态下英雄按普通单位结算 —— M2~M5 的全部测试
+ * 跑的正是这个形态，它们因此一条都不受 M6 影响。
+ *
+ * ⚠ **读 `data.kind`，绝不读 `data.hero`**（v2.1 §11.4b）：后者是纯构筑层的归属字段，
+ *   legality / 结算 / 投影 / DSL 求值一律不许碰它。
+ */
+export function isHero(cards: CardLookup | undefined, entity: EntityData): boolean {
+  return cards?.(entity.cardId)?.kind === HERO_KIND;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

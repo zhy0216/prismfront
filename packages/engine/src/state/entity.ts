@@ -172,8 +172,12 @@ export interface EntityData {
   firedOnce: string[];
   /**
    * 英雄在复燃泉里的可再部署回合（v2.1 §11.3）：`round >= respawnAt` 时可在 deploy 阶段上场。
-   * 不在等待的实体为 `null`。阵亡时置为 `当前回合 + 1 + rules.heroes.respawnDelay`。
-   * M6 实现语义，M2 只留字段。
+   * 不在等待的实体为 `null`（上了场就清，`respawnAt` 只在泉里有意义）。
+   *
+   * 两处写它，都在 M6：建局时写 `1`（首次部署，`create.ts`）、阵亡时写
+   * `当前回合 + 1 + rules.heroes.respawnDelay`（`resolve/deaths.ts` 的 `respawnRoundOf` ——
+   * 公式只有那一处，默认参数下即**缺席恰好一整回合**）。读它的是 `rules/phase.ts` 的
+   * `deployableHeroes`。它只回答"够不够格上场"，**名额**是另一回事（见 `deployCountFor`）。
    */
   respawnAt: number | null;
 }

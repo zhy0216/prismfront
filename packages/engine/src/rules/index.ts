@@ -31,12 +31,28 @@
 // 第 ② 步的「记录后全部冻结」在 M5/T5 有了实现：冻结值随 `act.strike.amount`
 // （IR §5.6 运行时超集字段）走完管线，M3 那道运行时哨兵与它的错误类已随之删除。
 //
+// **英雄占格参战**（M6 第 1 项）：`applyDeploy` 上场时从卡表把 `data.tags` 写进
+// `base`/`tags`，于是英雄有攻血、按 direction 出手、可被打 —— 而战斗与死亡结算里
+// **一行英雄特判都没有**（两处都只扫 `state.slots`），区别只剩死亡去向那一处
+// （在 `resolve/deaths.ts`）。语义由 `__tests__/heroes.test.ts` 逐条钉住。
+//
+// **部署与复活的完整时间线**（M6）：`deployCountFor` 把名额分成两支 —— 首次部署受
+// `deploySchedule` 排期约束（`[2,1]` = r1 两名、r2 第三名），复活回场**不受**排期约束、
+// `respawnAt` 到期即回；两支都再受战线空格数约束。`applyDeploy` 顺带把上一条命的
+// `damage` / 附魔 / 标志位清掉，于是"缺席恰好一整回合"是唯一的阵亡代价。
+//
+// **色门**（M6）：`apply.ts` 的 `checkPlayCard` 多了一道 —— 这张牌的每个颜色都要有一名
+// 己方**存活在场**的英雄，否则回 `color_locked`。融合卡（`colors` 长度 2）不是特例，
+// 它天然落在同一条判断上。判据只读 `data.colors`（**不读归属**）、只看战线（躺在复燃泉里
+// 的英雄不算数，于是"阵亡缺席期间该色牌全部锁定"不需要任何额外代码）。
+// 结构化的"缺哪个颜色"由 `lockedColorsOf` 给，M7 的 legalActions 复用它。
+//
 // 其余仍在别的里程碑：DSL 求值器与卡表（M4，`play_card` 的脚本接入点已标出）、
-// 触发器匹配与光环源（M5）、英雄的阵亡/复活语义（M6，部署动作本身已在 `phase.ts`）。
+// 触发器匹配与光环源（M5）。
 //
 // 上层 `src/index.ts` 由外层统一组装，本目录不参与。
 
-export { apply } from "./apply.ts";
+export { apply, lockedColorsOf } from "./apply.ts";
 export type { PlannedStrike } from "./combat.ts";
 export { planStrikes, resolveStrikes } from "./combat.ts";
 export { DEFAULT_RULES } from "./config.ts";

@@ -16,7 +16,17 @@
 // 盘面一律走 `testkit`（`openGame` / `putUnit`），不写状态字面量。
 
 import { describe, expect, test } from "bun:test";
-import type { CardData, CardId, Cond, EntityId, Num, Pool, Sel, SlotRef } from "@prismfront/ir";
+import type {
+  CardData,
+  CardId,
+  CardKind,
+  Cond,
+  EntityId,
+  Num,
+  Pool,
+  Sel,
+  SlotRef,
+} from "@prismfront/ir";
 import { peekEventLog } from "../../events/index.ts";
 import type { CtxBindings, GameState, PlayerId } from "../../state/index.ts";
 import { createCtx, getEntity, getZone, playerData, withCtx } from "../../state/index.ts";
@@ -25,8 +35,10 @@ import {
   deckTop,
   handOf,
   openGame,
+  putCard,
   putOnSlot,
   putUnit,
+  scriptCard,
   setFlag,
 } from "../../testkit/index.ts";
 import type { CardLookup, EvalEnv } from "../index.ts";
@@ -114,6 +126,15 @@ const board = (side: "friendly" | "enemy" | "both"): Sel => ({
   zone: "board",
 });
 const at = (side: "friendly" | "enemy", index: Num): SlotRef => ({ op: "slot.at", side, index });
+/**
+ * `zone(side,"board").where(is_kind(it, kind))` —— IR 的 `*_MINIONS` / `*_HEROES`
+ * 展开成的节点树（`ir/src/builder/constants.ts`）。这里照抄形状而不 import 那两个常量，
+ * 因为 engine 对 ir 是**纯类型依赖**（架构 §2.2 禁令 1）。
+ */
+const boardOfKind = (
+  side: "friendly" | "enemy" | "both",
+  kind: CardKind | readonly CardKind[],
+): Sel => ({ op: "sel.where", of: board(side), cond: { op: "cond.is_kind", of: IT, kind } });
 const rand = (of: Sel, n?: Num, distinct?: boolean): Sel => ({
   op: "sel.random",
   of,
@@ -122,6 +143,19 @@ const rand = (of: Sel, n?: Num, distinct?: boolean): Sel => ({
 });
 /** 一个必定推进 RNG 的条件（用来观测短路有没有真的跳过右侧）。 */
 const RANDOM_COND: Cond = { op: "cond.gte", l: { op: "num.random", lo: 0, hi: 9 }, r: 0 };
+
+/**
+ * 三张**只差 `data.kind`** 的卡（v2.1 §11.2 的词汇分化全押在这一个字段上）。
+ *
+ * 攻血一律由 {@link putCard} 在摆盘时给同一份，于是"英雄被算进随从里"这类错误
+ * 不可能被卡面数字的差异遮掩。
+ */
+const HERO_CARD = scriptCard("K_HERO", {}, { kind: "hero" });
+const MINION_CARD = scriptCard("K_MINION", {}, { kind: "minion" });
+const TOKEN_CARD = scriptCard("K_TOKEN", {}, { kind: "token" });
+/** 上面三张卡的卡表（形状同 {@link TEST_CARDS}，求值器只要这一个函数）。 */
+const KIND_CARDS: CardLookup = (cardId: CardId) =>
+  [HERO_CARD, MINION_CARD, TOKEN_CARD].find((card) => card.id === cardId)?.data;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ★ 1. 穷尽检查（assertNever）
@@ -567,6 +601,88 @@ describe("evalSel · 区域与组合", () => {
     expect(single(evalEntities(env, SELF))?.id).toBe(a);
     expect(single(evalEntities(env, board("friendly")))).toBeUndefined();
     expect(single([])).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ 选择器词汇分化：*_UNITS（含英雄）/ *_MINIONS（排除英雄）（v2.1 §11.2）
+// ═══════════════════════════════════════════════════════════════════════════
+// IR 侧这两个常量差的只有**一层 `sel.where(cond.is_kind(it,"minion"))`**
+// （`ir/src/builder/constants.ts` 文件头第 2 条），于是分化成不成立完全取决于
+// 求值器里 kind 过滤到底生不生效 —— 而这一支的两种写错方式症状截然不同：
+//   · `cond.is_kind` 恒真 ⇒ `*_MINIONS` 退回 `*_UNITS` ⇒ v2 §8.4 那批写「友方随从」的
+//     老卡把英雄一起选中。★ 盘面上**看不出任何异常**（英雄本来就在 `*_UNITS` 里），
+//     这是本节存在的理由；
+//   · 恒假 / 卡表没接进来 ⇒ `*_MINIONS` 筛成空集 ⇒ 那批卡整类静默失效。
+// 所以本节一律**成对**摆盘：同一格宽、同一份攻血，只有 `data.kind` 不同。
+// 光环那一侧的同一件事由 `resolve/__tests__/auras.test.ts` 钉住（`affects` 里的
+// 卡面查询必须经 `deps.cards`，否则同样退化成空集）。
+
+describe("★ 选择器词汇分化：*_UNITS 含英雄 / *_MINIONS 排除英雄（v2.1 §11.2）", () => {
+  test("同一条战线：UNITS 三个全要，MINIONS 只剩随从，HEROES 只剩英雄", () => {
+    const state = openGame();
+    const hero = putCard(state, 0, 0, HERO_CARD, { atk: 3, health: 6 });
+    const minion = putCard(state, 0, 1, MINION_CARD, { atk: 3, health: 6 });
+    const token = putCard(state, 0, 2, TOKEN_CARD, { atk: 3, health: 6 });
+    const env = envOf(state, minion, {}, KIND_CARDS);
+
+    // `FRIENDLY_UNITS` 不带过滤 ⇒ 英雄照样在里面（v2.1 §11.2：英雄占格参战）。
+    expect(evalSel(env, board("friendly"))).toEqual([hero, minion, token]);
+    // ★ 写错（kind 过滤没生效）会读到三个 —— 光环 / 群体伤害会连英雄一起吃。
+    expect(evalSel(env, boardOfKind("friendly", "minion"))).toEqual([minion]);
+    // 写错（恒假 / 卡表没传进来）会读到空集：那批卡整类失效。
+    expect(evalSel(env, boardOfKind("friendly", "hero"))).toEqual([hero]);
+    expect(evalSel(env, boardOfKind("friendly", "token"))).toEqual([token]);
+  });
+
+  test("kind 给列表是存在量化：列全三种就恰好补回 UNITS", () => {
+    const state = openGame();
+    const hero = putCard(state, 0, 0, HERO_CARD, { atk: 3, health: 6 });
+    const minion = putCard(state, 0, 1, MINION_CARD, { atk: 3, health: 6 });
+    const token = putCard(state, 0, 2, TOKEN_CARD, { atk: 3, health: 6 });
+    const env = envOf(state, minion, {}, KIND_CARDS);
+
+    // 写错（`kind` 当成单值、只比第一项）会读到 [minion]。
+    expect(evalSel(env, boardOfKind("friendly", ["minion", "token"]))).toEqual([minion, token]);
+    // ★ 列全三种 ⇒ 与不带过滤的 `*_UNITS` 逐项相同。这一条钉住"过滤器真的读了
+    //   每个实体的 `data.kind`"，而不是写死了一句"随从放行、别的一律挡掉"。
+    expect(evalSel(env, boardOfKind("friendly", ["minion", "hero", "token"]))).toEqual([
+      hero,
+      minion,
+      token,
+    ]);
+  });
+
+  test("多出来的一层 where 不改枚举顺序：both 仍是 [友方, 敌方] + 格序", () => {
+    const state = openGame();
+    const myHero = putCard(state, 0, 0, HERO_CARD, { atk: 3, health: 6 });
+    const myMinion = putCard(state, 0, 4, MINION_CARD, { atk: 3, health: 6 });
+    const theirMinion = putCard(state, 1, 2, MINION_CARD, { atk: 3, health: 6 });
+    const theirHero = putCard(state, 1, 7, HERO_CARD, { atk: 3, health: 6 });
+    const env = envOf(state, myMinion, {}, KIND_CARDS);
+
+    // 顺序是语义的一部分（本文件头）：`sel.where` 只筛不排，`ALL_MINIONS` 因此与
+    // `ALL_UNITS` 同序。写错（where 里重排 / side 换算错位）会读到相反的两方顺序。
+    expect(evalSel(env, board("both"))).toEqual([myHero, myMinion, theirMinion, theirHero]);
+    expect(evalSel(env, boardOfKind("both", "minion"))).toEqual([myMinion, theirMinion]);
+    // 敌方英雄同样被滤掉 —— 分化对两侧对称（`ENEMY_MINIONS` 不吃敌方英雄）。
+    expect(evalSel(env, boardOfKind("enemy", "minion"))).toEqual([theirMinion]);
+    expect(evalSel(env, boardOfKind("both", "hero"))).toEqual([myHero, theirHero]);
+  });
+
+  test("没有卡表 ⇒ *_MINIONS 是空集（查不到卡 ⇒ 无法确认是随从）", () => {
+    const state = openGame();
+    const hero = putCard(state, 0, 0, HERO_CARD, { atk: 3, health: 6 });
+    const minion = putCard(state, 0, 1, MINION_CARD, { atk: 3, health: 6 });
+    const env = envOf(state, minion); // NO_CARDS
+
+    // `*_UNITS` 不读卡面 ⇒ 退化形态下照旧全给。
+    expect(evalSel(env, board("friendly"))).toEqual([hero, minion]);
+    // ★ 写错（查不到卡就放行）会读到 [hero, minion] —— 英雄被当成随从，
+    //   而且只在**不带卡表**的形态下显形（M2~M4 的流水线全跑在这个形态上）。
+    //   退化方向取"不放行"，与 `cond.is_kind` 的既有语义同源（见下方 NO_CARDS 一节）。
+    expect(evalSel(env, boardOfKind("friendly", "minion"))).toEqual([]);
+    expect(evalSel(env, boardOfKind("friendly", "hero"))).toEqual([]);
   });
 });
 
