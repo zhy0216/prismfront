@@ -16,6 +16,60 @@ const issue = (
       : { layer: "L3", code: "wrong-sort", path, expected, actual: describeValue(actual), message },
   );
 
+const warning = (
+  path: string,
+  expected: string,
+  actual: unknown,
+  message?: string,
+): ValidationIssue => ({
+  ...issue(path, expected, actual, message),
+  severity: "warning",
+});
+
+// 表达式节点 = sel.* / cond.* / num.*。资源上限表的「表达式深度 ≤ 32」（IR §7）只计表达式
+// 嵌套，动作容器（act.when / act.repeat / act.for_each 等）不增加表达式深度——动作层的
+// 嵌套由「单卡节点数 ≤ 512」兜底，两层各管各的。
+const isExpressionNode = (op: string): boolean =>
+  op.startsWith("sel.") || op.startsWith("cond.") || op.startsWith("num.");
+
+const inspectTree = (value: unknown): { nodes: number; expressionDepth: number } => {
+  if (Array.isArray(value)) {
+    return value.reduce(
+      (total, item) => {
+        const current = inspectTree(item);
+        return {
+          nodes: total.nodes + current.nodes,
+          expressionDepth: Math.max(total.expressionDepth, current.expressionDepth),
+        };
+      },
+      { nodes: 0, expressionDepth: 0 },
+    );
+  }
+  if (typeof value !== "object" || value === null) return { nodes: 0, expressionDepth: 0 };
+
+  const object = value as Record<string, unknown>;
+  const isNode = typeof object.op === "string";
+  const isExpression = isNode && isExpressionNode(object.op as string);
+  let nodes = isNode ? 1 : 0;
+  let expressionDepth = isExpression ? 1 : 0;
+  for (const child of Object.values(object)) {
+    const current = inspectTree(child);
+    nodes += current.nodes;
+    expressionDepth = Math.max(
+      expressionDepth,
+      isExpression ? current.expressionDepth + 1 : current.expressionDepth,
+    );
+  }
+  return { nodes, expressionDepth };
+};
+
+const validateLimits = (value: unknown, path: string, issues: ValidationIssue[]): void => {
+  const limits = inspectTree(value);
+  if (limits.nodes > 512) issues.push(issue(path, "单卡节点数不超过 512", limits.nodes));
+  if (limits.expressionDepth > 32)
+    issues.push(issue(path, "表达式深度不超过 32", limits.expressionDepth));
+};
+
 const walk = (
   value: unknown,
   path: string,
@@ -140,7 +194,29 @@ export function validateSemantic(bundle: Bundle): readonly ValidationIssue[] {
         if (ancestor.includes("auras") || ancestor.includes("intercepts"))
           issues.push(issue(path, "aura/intercept 不得使用随机节点", node.op));
       }
+      if (
+        node.op === "slot.at" &&
+        typeof node.index === "number" &&
+        (node.index < 0 || node.index > 8)
+      )
+        issues.push(issue(`${path}.index`, "slot.at.index 在 [0, 8] 内", node.index));
+      if (node.op === "act.shift" && node.delta === 0)
+        issues.push(
+          warning(
+            `${path}.delta`,
+            "act.shift.delta 不应为 0",
+            node.delta,
+            `${path}.delta：字面量 0 无操作，可能是笔误`,
+          ),
+        );
+      if (node.op === "act.repeat" && typeof node.n === "number" && node.n > 64)
+        issues.push(issue(`${path}.n`, "act.repeat.n 不超过 64", node.n));
     });
+    // 拦截器链长度 ≤ 8 由引擎运行时强制（MAX_INTERCEPT_CHAIN，计真正应用了几条，
+    // 见 engine resolve/interceptors.ts）：链长是跨实体按 priority 动态收集的结果，
+    // 静态看单卡 intercepts 数组长度既会误报（多个拦截器可能只有一条命中）也漏报
+    // （多个实体的拦截器拼出超长链），bundle 校验不做这个判断。
+    validateLimits(card.script, `card.${card.id}`, issues);
     const bytes = JSON.stringify(card).length;
     if (bytes > 64 * 1024) issues.push(issue(`card.${card.id}`, "单卡不超过 64KB", bytes));
   }
@@ -162,5 +238,17 @@ export function validateSemantic(bundle: Bundle): readonly ValidationIssue[] {
         issues.push(issue(`${path}.card`, "存在的 card id", id));
     }
   });
+  for (const enchantment of Object.values(bundle.enchantments)) {
+    if (enchantment.attachesTo !== "minion" && enchantment.mods?.direction !== undefined)
+      issues.push(
+        warning(
+          `enchantment.${enchantment.id}.mods.direction`,
+          "direction 只用于 minion 附魔",
+          enchantment.mods.direction,
+          `enchantment.${enchantment.id}.mods.direction：非 minion 附魔不应包含 direction`,
+        ),
+      );
+    validateLimits(enchantment.script, `enchantment.${enchantment.id}`, issues);
+  }
   return issues;
 }

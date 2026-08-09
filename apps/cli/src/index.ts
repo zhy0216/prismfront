@@ -4,10 +4,14 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { type Bot, createBot } from "@prismfront/bot";
 import {
+  buildBundle,
   CARD_SOURCES,
+  DeckValidationError,
   ENCHANTMENT_SOURCES,
   KEYWORD_CARDS,
   KEYWORD_ENCHANTMENTS,
+  resolveCreatedAt,
+  validateConstructedDeck,
 } from "@prismfront/cards";
 import {
   ACT_HANDLERS,
@@ -229,6 +233,12 @@ const SIM_RULES: RulesConfig = {
   deck: { ...DEFAULT_RULES.deck, size: 0, startingHand: 0 },
 };
 
+const PLAY_HEROES = [
+  "PF1_HERO_RED",
+  "PF1_HERO_GREEN",
+  "PF1_HERO_BLUE",
+] as const satisfies readonly CardId[];
+
 function argValue(args: readonly string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const inline = args.find((arg) => arg.startsWith(prefix));
@@ -253,6 +263,15 @@ function numberOf(args: readonly string[], name: string, fallback: number): numb
 
 function deck(prefix: string, count = 30): CardId[] {
   return Array.from({ length: count }, (_, index) => `${prefix}${index + 1}`);
+}
+
+function playDeck(bundle: ReturnType<typeof buildBundle>): CardId[] {
+  return PLAY_HEROES.flatMap((hero) =>
+    Object.values(bundle.cards)
+      .filter((card) => card.data.hero === hero)
+      .slice(0, DEFAULT_RULES.heroes.cardsPerHero)
+      .map((card) => card.id),
+  );
 }
 
 function assertInvariants(state: GameState): void {
@@ -336,11 +355,15 @@ function applyChecked(
   return { state: result.state, events: result.events };
 }
 
-function prepareState(seed: number, rules: RulesConfig = DEFAULT_RULES): GameState {
-  const state = createGame(rules, [deck("A", rules.deck.size), deck("B", rules.deck.size)], seed, {
+function prepareState(options: RunBotOptions): GameState {
+  const rules = options.rules ?? DEFAULT_RULES;
+  const decks = options.decks ?? [deck("A", rules.deck.size), deck("B", rules.deck.size)];
+  const createOptions = {
     shuffle: false,
     firstPlayer: 0,
-  });
+    ...(options.heroes === undefined ? {} : { heroes: options.heroes }),
+  } as const;
+  const state = createGame(rules, decks, options.seed, createOptions);
   for (const entity of Object.values(state.entities)) {
     if (entity.cardId !== "__base") {
       const power = entity.owner === 0 ? 2 : 1;
@@ -366,7 +389,20 @@ function automaticIntent(state: GameState): Intent {
     return { t: "mulligan", player: 0, toss: [[], []] };
   }
   if (state.phase === "deploy") {
-    return { t: "deploy", player: 0, picks: [[], []] };
+    const count = state.rules.heroes.deploySchedule[state.round - 1] ?? 0;
+    const picks = ([0, 1] as const).map((player) => {
+      const fountain = state.zones[`p${player}:fountain`];
+      const heroes = fountain.filter((id) => {
+        const entity = state.entities[id];
+        return entity !== undefined && (entity.respawnAt ?? 0) <= state.round;
+      });
+      const slots = state.slots[player].flatMap((id, slot) => (id === null ? [slot] : []));
+      return heroes.slice(0, Math.min(count, slots.length)).map((hero, index) => ({
+        hero,
+        slot: slots[index] ?? 0,
+      }));
+    });
+    return { t: "deploy", player: 0, picks: [picks[0] ?? [], picks[1] ?? []] };
   }
   throw new Error(`无法为相位 ${state.phase} 自动生成意图`);
 }
@@ -377,10 +413,12 @@ export interface RunBotOptions {
   readonly bots?: readonly [Bot, Bot];
   readonly maxSteps?: number;
   readonly print?: boolean;
+  readonly decks?: readonly [readonly CardId[], readonly CardId[]];
+  readonly heroes?: readonly [readonly CardId[], readonly CardId[]];
 }
 
 export function runBotGame(options: RunBotOptions): GameState {
-  let state = prepareState(options.seed, options.rules);
+  let state = prepareState(options);
   const bots = options.bots ?? [
     createBot("greedy", options.seed),
     createBot("random", options.seed ^ 0xa5a5a5a5),
@@ -429,8 +467,28 @@ async function play(args: readonly string[]): Promise<number> {
     console.error(USAGE);
     return 2;
   }
+  const bundle = buildBundle({
+    cards: CARD_SOURCES,
+    enchantments: ENCHANTMENT_SOURCES,
+    createdAt: resolveCreatedAt("0"),
+  });
+  const constructed = playDeck(bundle);
+  const decks: readonly [readonly CardId[], readonly CardId[]] = [constructed, constructed];
+  for (const player of [0, 1] as const) {
+    try {
+      validateConstructedDeck(bundle, DEFAULT_RULES, PLAY_HEROES, decks[player]);
+    } catch (error) {
+      if (error instanceof DeckValidationError) {
+        console.error(`玩家 ${player + 1} 组牌校验失败：${error.message}`);
+        return 1;
+      }
+      throw error;
+    }
+  }
   const state = runBotGame({
     seed,
+    decks,
+    heroes: [PLAY_HEROES, PLAY_HEROES],
     bots: [createBot(p0, seed), createBot(p1, seed ^ 0x51ed270b)],
     print: true,
   });

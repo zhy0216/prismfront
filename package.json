@@ -25,7 +25,8 @@
     "play:online": "cd apps/server && bun run play:online",
     "replay": "bun run apps/cli/src/index.ts replay",
     "sim": "bun run apps/cli/src/index.ts sim",
-    "ir:print": "bun run apps/cli/src/ir/print.ts"
+    "ir:print": "bun run apps/cli/src/ir/print.ts",
+    "ir:diff": "bun run apps/cli/src/ir/diff.ts"
   },
   "devDependencies": {
     "typescript": "7.0.2",

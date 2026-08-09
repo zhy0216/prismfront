@@ -88,6 +88,21 @@ import {
 } from "../types/index.ts";
 
 /**
+ * v2 §10 迁移清单里被删除的事件（v2 §9 校验）：它们不在 EVENT_NAMES 枚举里，
+ * L1 枚举检查会报错，这里给报错附上改名映射提示。
+ */
+export const DELETED_EVENTS = {
+  turn_began: "round_began",
+  turn_ended: "round_ended",
+  minion_summoned: "unit_summoned",
+  minion_died: "unit_died",
+  mana_spent: "无对应事件",
+  weapon_equipped: "无对应事件",
+  attacked: "struck 或 damaged（按语义选择）",
+  attack_declared: "struck",
+} as const;
+
+/**
  * 种类 token → 它在 T1 权威类型里对应的类型。
  *
  * 这张接口就是 token 的定义处：{@link FieldKind} 是它的键集，

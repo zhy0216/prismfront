@@ -13,7 +13,7 @@
 
 import type { Bundle, Card, Enchantment } from "../types/index.ts";
 import type { ValidationIssue, ValidationLayer, ValidationResult } from "./issues.ts";
-import { formatIssues, VALIDATION_LAYERS } from "./issues.ts";
+import { describeValue, formatIssues, makeIssue, VALIDATION_LAYERS } from "./issues.ts";
 import type { FieldKind } from "./kinds.ts";
 import { validateSemantic } from "./semantic.ts";
 import { checkKind, createContext } from "./walk.ts";
@@ -30,6 +30,59 @@ const toResult = (issues: readonly ValidationIssue[]): ValidationResult => ({
   issues,
 });
 
+const addHeroRules = (value: unknown, path: string, issues: ValidationIssue[]): void => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+  const object = value as Record<string, unknown>;
+  const data = object.data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return;
+  const cardData = data as Record<string, unknown>;
+  if (cardData.kind !== "hero") return;
+  if (Object.hasOwn(cardData, "cost"))
+    issues.push(
+      makeIssue({
+        layer: "L1",
+        code: "wrong-sort",
+        path: `${path}.data.cost`,
+        expected: "hero 卡不得设置 cost",
+        actual: describeValue(cardData.cost),
+      }),
+    );
+  if (!Array.isArray(cardData.colors) || cardData.colors.length !== 1)
+    issues.push(
+      makeIssue({
+        layer: "L1",
+        code: "wrong-sort",
+        path: `${path}.data.colors`,
+        expected: "hero 卡 colors 恰 1 个",
+        actual: describeValue(cardData.colors),
+      }),
+    );
+  if (cardData.collectible !== false)
+    issues.push(
+      makeIssue({
+        layer: "L1",
+        code: "wrong-sort",
+        path: `${path}.data.collectible`,
+        expected: "hero 卡 collectible 必须为 false（不入 30 张卡组）",
+        actual: describeValue(cardData.collectible),
+      }),
+    );
+};
+
+const addL1Rules = (
+  value: unknown,
+  kind: FieldKind,
+  defaultPath: string,
+  issues: ValidationIssue[],
+): void => {
+  if (kind === "cardDoc") addHeroRules(value, defaultPath, issues);
+  if (kind !== "bundle" || typeof value !== "object" || value === null || Array.isArray(value))
+    return;
+  const cards = (value as Record<string, unknown>).cards;
+  if (typeof cards !== "object" || cards === null || Array.isArray(cards)) return;
+  for (const [id, card] of Object.entries(cards)) addHeroRules(card, `card.${id}`, issues);
+};
+
 /** 所有入口的公共实现：建上下文 → 从根 token 开始走一遍 → 收结果。 */
 const run = (
   value: unknown,
@@ -39,6 +92,8 @@ const run = (
 ): ValidationResult => {
   const ctx = createContext(options?.layers ?? VALIDATION_LAYERS);
   checkKind(value, kind, options?.path ?? defaultPath, ctx, 0);
+  if ((options?.layers ?? VALIDATION_LAYERS).includes("L1"))
+    addL1Rules(value, kind, options?.path ?? defaultPath, ctx.issues);
   return toResult(ctx.issues);
 };
 
@@ -72,7 +127,12 @@ export const validateL2 = (bundle: unknown, options?: ValidateOptions): Validati
 /** M11 semantic/reference/colour-wheel lint. */
 export const validateL3 = (bundle: unknown, options?: ValidateOptions): ValidationResult => {
   const structural = validate(bundle, { ...options, layers: ["L1", "L2"] });
-  if (!structural.ok) return structural;
+  if (!structural.ok) {
+    if (structural.issues.every((item) => item.code === "bad-enum")) {
+      return toResult([...structural.issues, ...validateSemantic(bundle as Bundle)]);
+    }
+    return structural;
+  }
   return toResult(validateSemantic(bundle as Bundle));
 };
 

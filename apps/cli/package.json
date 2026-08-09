@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "ir:print": "bun run src/ir/print.ts",
+    "ir:diff": "bun run src/ir/diff.ts",
     "sim": "bun run src/index.ts sim"
   }
 }

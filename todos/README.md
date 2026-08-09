@@ -65,7 +65,7 @@ M0 ── M1 ── M2 ── M3 ── M4 ── M5 ── M6 ── M7 ── 
 | [M8](./done/M08-bot-CLI-fuzz-golden-replay.md) | bot / CLI / fuzz / golden replay ★ | 可 headless 对打 | 10 万局 fuzz 无失败 | 3–5d | ✅ |
 | [M9](./done/M09-Colyseus服务端.md) | Colyseus 服务端 | 房间、计时、重连 | 两端打完一局 | 3–4d | ✅ |
 | [M10](./done/M10-Phaser客户端.md) | Phaser 客户端 | 可玩界面 | 浏览器打完一局 | 8–12d | ✅ |
-| [M11](./M11-PF1全卡池与lint.md) | PF1 全卡池与 lint | 33 卡 + 3 英雄 | `bunx turbo ir:validate` | 4–5d | ☐ |
+| [M11](./done/M11-PF1全卡池与lint.md) | PF1 全卡池与 lint | 33 卡 + 3 英雄 | `bunx turbo ir:validate` | 4–5d | ✅ |
 | [M12](./M12-平衡闭环.md) | 平衡闭环 | winrate 表、调参流程 | 局长 6±1 回合 | 持续 | ☐ |
 
 **横向清单**：[需要拍板的决策](./决策待办.md)（**11/11 已拍板**，约束已下沉到各 M 文件）·

@@ -35,6 +35,20 @@ describe("PF1 M11 complete pool", () => {
     expect(() => validateHeroPoolFloor(BUNDLE, DEFAULT_RULES_CONFIG)).not.toThrow();
   });
 
+  test("hero with fewer than 4 owned kinds fails the quota pool floor", () => {
+    const hero = PF1_HERO_RED;
+    const owned = NON_HEROES.filter((card) => card.data.hero === hero.id);
+    expect(owned.length).toBeGreaterThan(3);
+    const threeKinds = owned.slice(0, 3);
+    const thin = buildBundle({
+      cards: [hero, ...NON_HEROES.filter((card) => card.data.hero !== hero.id), ...threeKinds],
+      enchantments: PF1_ENCHANTMENTS,
+    });
+    expect(() => validateHeroPoolFloor(thin, DEFAULT_RULES_CONFIG)).toThrow(
+      `专属卡种类 ${threeKinds.length} < 4`,
+    );
+  });
+
   test("constructed deck enforces 10 cards per hero and maxCopies=3", () => {
     const heroes = [PF1_HERO_RED.id, PF1_HERO_GREEN.id, PF1_HERO_BLUE.id];
     const deck = heroes.flatMap((hero) => {

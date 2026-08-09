@@ -63,6 +63,9 @@ export class MatchRoom extends ColyseusRoom {
       schedule: (delayMs, callback) => this.transport.schedule(delayMs, callback),
       persistResult: enqueueMatchResult,
     };
+    // 构筑校验失败（DeckValidationError）让 onCreate 直接抛：Colyseus matchMaker
+    // 会把它包成 ServerError 并透传 message 给客户端 join 调用方（建房被拒的原因
+    // 因此可见），房间不创建、onJoin 不触发，客户端也不会误走重连路径。
     this.core = new MatchRoomCore(coreOptions);
     this.maxClients = 2;
     this.patchRate = null;

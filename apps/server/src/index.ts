@@ -3,7 +3,12 @@
 // 房间本身不使用 Colyseus Schema：棋盘走 snapshot/events 普通消息，serializerId 保持
 // "none"。Colyseus 的 API 和 MatchRoom 生命周期适配器都只在 transport/ 下出现。
 
-import { CARD_SOURCES, ENCHANTMENT_SOURCES } from "@prismfront/cards";
+import {
+  buildBundle,
+  CARD_SOURCES,
+  ENCHANTMENT_SOURCES,
+  resolveCreatedAt,
+} from "@prismfront/cards";
 import { defineCard } from "@prismfront/ir";
 import { startColyseusServer } from "./transport/colyseus.ts";
 import { MatchRoom } from "./transport/match-room.ts";
@@ -23,6 +28,11 @@ const DEMO_CARD = defineCard({
 });
 
 MatchRoom.cardRegistry = {
+  bundle: buildBundle({
+    cards: CARD_SOURCES,
+    enchantments: ENCHANTMENT_SOURCES,
+    createdAt: resolveCreatedAt("0"),
+  }),
   cards: [...CARD_SOURCES, DEMO_CARD],
   enchantments: ENCHANTMENT_SOURCES,
 };

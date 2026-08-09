@@ -12,7 +12,7 @@ import type { NodeOp } from "../types/index.ts";
 import type { IssueCode, ValidationIssue, ValidationLayer } from "./issues.ts";
 import { describeValue, fieldPath, ISSUE_CODES, itemPath, makeIssue } from "./issues.ts";
 import type { FieldKind } from "./kinds.ts";
-import { isOptionalSpec, kindOfSpec, specOf } from "./kinds.ts";
+import { DELETED_EVENTS, isOptionalSpec, kindOfSpec, specOf } from "./kinds.ts";
 import type { RuntimeObjectSchema } from "./schemas.ts";
 import { familyPrefixOf, NODE_SCHEMAS, STRUCT_SCHEMAS, TAGGED_SCHEMAS } from "./schemas.ts";
 
@@ -280,12 +280,16 @@ export function checkKind(
         return;
       }
       if (!(spec.values as readonly string[]).includes(value)) {
+        const replacement = (DELETED_EVENTS as Readonly<Record<string, string | undefined>>)[value];
         push(ctx, {
           layer: "L1",
           code: ISSUE_CODES.badEnum,
           path,
           expected: spec.describe,
           actual: JSON.stringify(value),
+          ...(replacement === undefined
+            ? {}
+            : { message: `${JSON.stringify(value)} 已删除，请改用 ${replacement}` }),
         });
       }
       return;

@@ -3,6 +3,7 @@
 // 这里没有 Colyseus 类型：它只把不透明 playerId 映射成引擎的 PlayerId，并把引擎
 // 的快照/事件投影成 shared 协议。真正的 WebSocket 生命周期在 MatchRoom 适配器里。
 
+import { DeckValidationError, validateConstructedDeck } from "@prismfront/cards";
 import {
   apply,
   createGame,
@@ -25,7 +26,7 @@ import {
   type ResolveDeps,
   zoneKey,
 } from "@prismfront/engine";
-import type { Card, CardId, Enchantment, EntityId, RulesConfig } from "@prismfront/ir";
+import type { Bundle, Card, CardId, Enchantment, EntityId, RulesConfig } from "@prismfront/ir";
 import type {
   EndReason,
   OverMsg,
@@ -37,6 +38,7 @@ import type {
 import type { TimerHandle, TransportClient } from "../transport/index.ts";
 
 export interface MatchRoomCardRegistry {
+  readonly bundle?: Bundle;
   readonly cards?: readonly Card[];
   readonly enchantments?: readonly Enchantment[];
 }
@@ -317,6 +319,25 @@ export class MatchRoomCore {
       ...(options.firstPlayer === undefined ? {} : { firstPlayer: options.firstPlayer }),
       ...(options.heroes === undefined ? {} : { heroes: options.heroes }),
     };
+    // 只拒「给了英雄却连卡组都不给」——构筑意图残缺到无法校验；decks-only 的建局
+    // （引擎允许无英雄模式）保持兼容放行。
+    if (options.heroes !== undefined && options.decks === undefined) {
+      throw new DeckValidationError("提供了 heroes 就必须同时提供 decks");
+    }
+    if (
+      options.decks !== undefined &&
+      options.heroes !== undefined &&
+      options.cardRegistry?.bundle !== undefined
+    ) {
+      for (const player of [0, 1] as const) {
+        validateConstructedDeck(
+          options.cardRegistry.bundle,
+          this.rules,
+          options.heroes[player],
+          options.decks[player],
+        );
+      }
+    }
     this.currentState = createGame(this.rules, decks, this.seed, gameOptions);
     hydrateCardData(this.currentState, options.cardRegistry);
   }

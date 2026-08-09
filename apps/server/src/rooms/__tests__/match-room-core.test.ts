@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildBundle, resolveCreatedAt } from "@prismfront/cards";
 import { DEFAULT_RULES, ResolutionLoopError } from "@prismfront/engine";
 import { defineCard } from "@prismfront/ir";
 import type { ServerMsg } from "@prismfront/shared";
@@ -45,6 +46,202 @@ function open(core: MatchRoomCore): void {
 }
 
 describe("MatchRoomCore service outlet", () => {
+  test("rejects an invalid constructed deck before creating the game", () => {
+    const hero = defineCard({
+      id: "DECK_HERO",
+      name: { zh: "构筑英雄" },
+      kind: "hero",
+      colors: "red",
+      collectible: false,
+      atk: 1,
+      health: 2,
+    });
+    const card = defineCard({
+      id: "DECK_CARD",
+      hero: hero.id,
+      name: { zh: "构筑卡" },
+      kind: "minion",
+      colors: "red",
+      collectible: true,
+      cost: 1,
+      atk: 1,
+      health: 1,
+    });
+    const bundle = buildBundle({
+      cards: [hero, card],
+      enchantments: [],
+      createdAt: resolveCreatedAt("0"),
+    });
+
+    expect(
+      () =>
+        new MatchRoomCore(
+          smallOptions({
+            decks: [["MISSING_CARD"], [card.id]],
+            heroes: [[hero.id], [hero.id]],
+            cardRegistry: { bundle, cards: [hero, card] },
+          }),
+        ),
+    ).toThrow("卡牌不存在：MISSING_CARD");
+  });
+
+  test("rejects invalid constructed decks: duplicate heroes, wrong ownership, wrong quota, wrong size", () => {
+    const heroA = defineCard({
+      id: "DECK_HERO_A",
+      name: { zh: "构筑英雄甲" },
+      kind: "hero",
+      colors: "red",
+      collectible: false,
+      atk: 1,
+      health: 2,
+    });
+    const heroB = defineCard({
+      id: "DECK_HERO_B",
+      name: { zh: "构筑英雄乙" },
+      kind: "hero",
+      colors: "green",
+      collectible: false,
+      atk: 1,
+      health: 2,
+    });
+    const heroC = defineCard({
+      id: "DECK_HERO_C",
+      name: { zh: "构筑英雄丙" },
+      kind: "hero",
+      colors: "blue",
+      collectible: false,
+      atk: 1,
+      health: 2,
+    });
+    const cardA = defineCard({
+      id: "DECK_CARD_A",
+      hero: heroA.id,
+      name: { zh: "构筑卡甲" },
+      kind: "minion",
+      colors: "red",
+      collectible: true,
+      cost: 1,
+      atk: 1,
+      health: 1,
+    });
+    const cardB = defineCard({
+      id: "DECK_CARD_B",
+      hero: heroB.id,
+      name: { zh: "构筑卡乙" },
+      kind: "minion",
+      colors: "green",
+      collectible: true,
+      cost: 1,
+      atk: 1,
+      health: 1,
+    });
+    const cardC = defineCard({
+      id: "DECK_CARD_C",
+      hero: heroC.id,
+      name: { zh: "构筑卡丙" },
+      kind: "minion",
+      colors: "blue",
+      collectible: true,
+      cost: 1,
+      atk: 1,
+      health: 1,
+    });
+    const bundle = buildBundle({
+      cards: [heroA, heroB, heroC, cardA, cardB, cardC],
+      enchantments: [],
+      createdAt: resolveCreatedAt("0"),
+    });
+    const registry = { bundle, cards: [heroA, heroB, heroC, cardA, cardB, cardC] };
+    // 每方 2 名英雄、每英雄 1 张、牌库 2 张（perDeck=2 × cardsPerHero=1 = deck.size=2）。
+    const duoOptions = (overrides: Partial<MatchRoomOptions>) =>
+      smallOptions({
+        ...overrides,
+        rules: {
+          ...DEFAULT_RULES,
+          baseHp: 2,
+          deck: { ...DEFAULT_RULES.deck, size: 2, startingHand: 1 },
+          heroes: { ...DEFAULT_RULES.heroes, perDeck: 2, cardsPerHero: 1, deploySchedule: [2] },
+        },
+      });
+    const base = { cardRegistry: registry } as Partial<MatchRoomOptions>;
+
+    expect(
+      () =>
+        new MatchRoomCore(
+          duoOptions({
+            ...base,
+            decks: [
+              [cardA.id, cardB.id],
+              [cardA.id, cardB.id],
+            ],
+            heroes: [
+              [heroA.id, heroA.id],
+              [heroA.id, heroB.id],
+            ],
+          }),
+        ),
+    ).toThrow("英雄必须互不相同");
+
+    expect(
+      () =>
+        new MatchRoomCore(
+          duoOptions({
+            ...base,
+            decks: [
+              [cardA.id, cardC.id],
+              [cardA.id, cardB.id],
+            ],
+            heroes: [
+              [heroA.id, heroB.id],
+              [heroA.id, heroB.id],
+            ],
+          }),
+        ),
+    ).toThrow("不属于所选英雄");
+
+    expect(
+      () =>
+        new MatchRoomCore(
+          duoOptions({
+            ...base,
+            decks: [
+              [cardA.id, cardA.id],
+              [cardA.id, cardB.id],
+            ],
+            heroes: [
+              [heroA.id, heroB.id],
+              [heroA.id, heroB.id],
+            ],
+          }),
+        ),
+    ).toThrow("恰好携带 1 张");
+
+    expect(
+      () =>
+        new MatchRoomCore(
+          duoOptions({
+            ...base,
+            decks: [[cardA.id], [cardA.id, cardB.id]],
+            heroes: [
+              [heroA.id, heroB.id],
+              [heroA.id, heroB.id],
+            ],
+          }),
+        ),
+    ).toThrow("deck.size");
+
+    expect(
+      () =>
+        new MatchRoomCore(
+          smallOptions({
+            ...base,
+            decks: undefined as unknown as readonly [readonly string[], readonly string[]],
+            heroes: [[heroA.id], [heroA.id]],
+          }),
+        ),
+    ).toThrow("提供了 heroes 就必须同时提供 decks");
+  });
+
   test("projects opponent hand without leaking card ids", () => {
     const p0 = client("session-0");
     const p1 = client("session-1");

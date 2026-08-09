@@ -470,7 +470,7 @@ v1 的挂起机制原样复用，无新机制。
 
 ```ts
 defineCard({
-  id: "GRID_005", name: "战地号手", kind: "minion", cost: 4, atk: 2, health: 4,
+  id: "GRID_005", name: "战地号手", kind: "minion", cost: 4, atk: 3, health: 4,
   text: "战斗开始时，所有友方单位本次战斗攻击力 +1。",
   triggers: [ on(CombatBegan(), Buff(FRIENDLY_MINIONS, "GRID_005e")) ],
 });
