@@ -1,12 +1,41 @@
 // @prismfront/server —— Colyseus 房间与投影（架构 §2.3）
-// 内部结构：transport/（Colyseus 隔离层，风险 A 的爆炸半径就限在这一层）、rooms/、
-//           projector.ts、persistence/。不含任何卡牌规则。
-// 决策 #1（已拍板）：不使用 Colyseus Schema。房间元信息与棋盘一样走 send/onMessage，
-//   序列化器 3/4 大版本裂口随即与我们无关（架构 §1.2 首选方案、§9）。
-// M0 spike S1 已实测通过，见 spike/ 与其结论。M9 写房间时必须守住的两条：
-//   1. 绝不调用 this.setState() —— 一旦调用，序列化器从 none 切到 schema，
-//      而本仓当前解析到的是 @colyseus/schema@3.0.76（core 0.17.47 的 peer 要 ^4.0.7），
-//      裂口会立刻变成真实的编码错配。客户端断言 room.serializerId === "none" 是这条的哨兵。
-//   2. onLeave 里 allowReconnection 的 reject 值是布尔 false，不是 Error（实测）。
-// 房间代码属于 M9，本步只留占位。
-export {};
+//
+// 房间本身不使用 Colyseus Schema：棋盘走 snapshot/events 普通消息，serializerId 保持
+// "none"。Colyseus 的 API 和 MatchRoom 生命周期适配器都只在 transport/ 下出现。
+
+import { CARD_SOURCES, ENCHANTMENT_SOURCES } from "@prismfront/cards";
+import { startColyseusServer } from "./transport/colyseus.ts";
+import { MatchRoom } from "./transport/match-room.ts";
+
+MatchRoom.cardRegistry = { cards: CARD_SOURCES, enchantments: ENCHANTMENT_SOURCES };
+
+export type {
+  MatchResultRecord,
+  MatchRoomCardRegistry,
+  MatchRoomOptions,
+} from "./rooms/match-room-core.ts";
+export {
+  bindClientIntent,
+  MatchRoomCore,
+  makeCardRegistry,
+  snapshotFor,
+} from "./rooms/match-room-core.ts";
+export type {
+  ClientTransport,
+  RoomTransport,
+  TimerHandle,
+  TransportClient,
+} from "./transport/index.ts";
+export { MatchRoom } from "./transport/match-room.ts";
+
+export const MATCH_ROOM_NAME = "match";
+
+export async function startServer(port = Number(Bun.env.PORT ?? "2567")) {
+  return startColyseusServer(MATCH_ROOM_NAME, MatchRoom, port);
+}
+
+if (import.meta.main) {
+  const port = Number(Bun.env.PORT ?? "2567");
+  await startServer(port);
+  console.log(`PRISMFRONT_SERVER_READY ${port}`);
+}

@@ -7,7 +7,7 @@
 export * from "./events/index.ts";
 export { ACT_HANDLERS, DEFAULT_DEPS, moveHandler } from "./handlers/index.ts";
 export type { HandlerTable, ResolveDeps } from "./resolve/index.ts";
-export { pushAct, suspend } from "./resolve/index.ts";
+export { defaultInputChoice, pushAct, ResolutionLoopError, suspend } from "./resolve/index.ts";
 export * from "./rules/index.ts";
 export * from "./state/index.ts";
 export * from "./view/index.ts";

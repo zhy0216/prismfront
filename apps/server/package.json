@@ -6,7 +6,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@prismfront/cards": "workspace:*",
     "@prismfront/engine": "workspace:*",
+    "@prismfront/ir": "workspace:*",
     "@prismfront/shared": "workspace:*",
     "colyseus": "catalog:server",
     "@colyseus/bun-websockets": "catalog:server",
@@ -19,6 +21,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
+    "test": "bun test",
+    "play:online": "bun run src/online.ts",
     "spike": "bun run ./spike/index.ts"
   }
 }

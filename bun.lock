@@ -38,7 +38,9 @@
       "name": "@prismfront/server",
       "dependencies": {
         "@colyseus/bun-websockets": "catalog:server",
+        "@prismfront/cards": "workspace:*",
         "@prismfront/engine": "workspace:*",
+        "@prismfront/ir": "workspace:*",
         "@prismfront/shared": "workspace:*",
         "colyseus": "catalog:server",
         "zod": "catalog:server",
