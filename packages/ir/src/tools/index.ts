@@ -16,6 +16,8 @@
 //
 // 不在 M1 范围内的姊妹工具：`ir:diff`（`diffBundles`）与 `ir:schema`。
 
+export type { BundleDiff } from "./diff-bundles.ts";
+export { diffBundles } from "./diff-bundles.ts";
 export type { PrintContext } from "./format.ts";
 export {
   DEFAULT_PRINT_WIDTH,

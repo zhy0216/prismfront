@@ -9,7 +9,7 @@
 //   validate(bundle)                          ← validate/
 //   printCard                                 ← tools/
 //   COLOR_OWNERSHIP                           ← color-ownership.ts
-//   diffBundles                               ← 尚未实现（M1 未要求，见 M01 遗留项）
+//   diffBundles                               ← bundle structural diff
 
 export * from "./builder/index.ts";
 export * from "./color-ownership.ts";
