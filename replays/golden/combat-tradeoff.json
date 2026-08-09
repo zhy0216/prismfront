@@ -1,0 +1,34 @@
+{
+  "name": "combat-tradeoff",
+  "scenario": "同归于尽：双方在同一格交战",
+  "seed": 101,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "alternate",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [["GOLDEN_RED_STRIKER"], ["GOLDEN_BLUE_STRIKER"]],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    { "t": "play_card", "player": 0, "card": 3, "slot": 0 },
+    { "t": "play_card", "player": 1, "card": 4, "slot": 0 },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 }
+  ],
+  "expectedEvents": ["struck", "unit_died"],
+  "expectedEventCounts": { "struck": 2, "unit_died": 2 },
+  "expectedEventSequence": [
+    { "name": "struck", "source": 3, "target": 4, "amount": 3 },
+    { "name": "struck", "source": 4, "target": 3, "amount": 2 },
+    { "name": "unit_died", "target": 3, "slot": 0 },
+    { "name": "unit_died", "target": 4, "slot": 0 }
+  ],
+  "messagesPerSeat": [[], []]
+}

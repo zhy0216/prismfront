@@ -1,0 +1,31 @@
+{
+  "name": "beam-through-empty",
+  "scenario": "空格穿透后直击敌方基地",
+  "seed": 102,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "alternate",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [["GOLDEN_RED_STRIKER"], []],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    { "t": "play_card", "player": 0, "card": 3, "slot": 0 },
+    { "t": "pass", "player": 1 },
+    { "t": "pass", "player": 0 }
+  ],
+  "expectedEvents": ["struck", "damaged"],
+  "expectedEventCounts": { "struck": 1 },
+  "expectedEventSequence": [
+    { "name": "struck", "source": 3, "target": 2, "amount": 3 },
+    { "name": "damaged", "source": 3, "target": 2, "amount": 3 }
+  ],
+  "messagesPerSeat": [[], []]
+}

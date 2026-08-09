@@ -1,0 +1,51 @@
+{
+  "name": "deploy-r1-r2",
+  "scenario": "r1 部署两名、r2 部署第三名英雄",
+  "seed": 106,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "alternate",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [["GOLDEN_RED_STRIKER"], ["GOLDEN_BLUE_STRIKER"]],
+  "heroes": [
+    ["GOLDEN_HERO_RED", "GOLDEN_HERO_RED", "GOLDEN_HERO_RED"],
+    ["GOLDEN_HERO_BLUE", "GOLDEN_HERO_BLUE", "GOLDEN_HERO_BLUE"]
+  ],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    {
+      "t": "deploy",
+      "player": 0,
+      "picks": [
+        [{ "hero": 5, "slot": 0 }, { "hero": 6, "slot": 1 }],
+        [{ "hero": 8, "slot": 0 }, { "hero": 9, "slot": 1 }]
+      ]
+    },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 },
+    {
+      "t": "deploy",
+      "player": 0,
+      "picks": [[{ "hero": 7, "slot": 2 }], [{ "hero": 10, "slot": 2 }]]
+    },
+    { "t": "pass", "player": 1 },
+    { "t": "pass", "player": 0 }
+  ],
+  "expectedEvents": ["hero_deployed", "struck"],
+  "expectedEventCounts": { "hero_deployed": 6, "struck": 6 },
+  "expectedEventSequence": [
+    { "name": "hero_deployed", "target": 5, "cardId": "GOLDEN_HERO_RED", "slot": 0 },
+    { "name": "hero_deployed", "target": 9, "cardId": "GOLDEN_HERO_BLUE", "slot": 1 },
+    { "name": "hero_deployed", "target": 7, "cardId": "GOLDEN_HERO_RED", "slot": 2 },
+    { "name": "hero_deployed", "target": 10, "cardId": "GOLDEN_HERO_BLUE", "slot": 2 }
+  ],
+  "messagesPerSeat": [[], []]
+}

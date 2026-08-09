@@ -27,7 +27,7 @@ import { evalNum } from "../eval/index.ts";
 import { emitEvent } from "../events/index.ts";
 import type { ActHandler } from "../resolve/index.ts";
 import { pushAct } from "../resolve/index.ts";
-import { withCtx } from "../state/index.ts";
+import { BASE_CARD_ID, withCtx } from "../state/index.ts";
 import { frozenEntities, singleTarget, snapshot, sourceOf } from "./targets.ts";
 
 /**
@@ -57,8 +57,18 @@ export const hitHandler: ActHandler<"act.hit"> = (env, act) => {
   }
   const source = sourceOf(env);
   for (const target of frozenEntities(env, targets)) {
-    target.damage += amount;
-    emitEvent(env.state, { name: "damaged", source, target: target.id, amount });
+    // A combat batch can contain several frozen strikes against the same base.
+    // Clamp the recorded damage at the base's health so the public state never
+    // exposes a negative health value while preserving the simultaneous batch.
+    const applied =
+      target.cardId === BASE_CARD_ID
+        ? Math.min(amount, Math.max(0, target.tags.health - target.damage))
+        : amount;
+    if (applied <= 0) {
+      continue;
+    }
+    target.damage += applied;
+    emitEvent(env.state, { name: "damaged", source, target: target.id, amount: applied });
   }
 };
 

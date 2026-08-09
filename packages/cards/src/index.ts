@@ -23,6 +23,7 @@ export type { BuildInput } from "./build/bundle.ts";
 export { BUNDLE_EPOCH, buildBundle, resolveCreatedAt } from "./build/bundle.ts";
 export type { ClientBundle, ClientCard } from "./build/client.ts";
 export { projectClient } from "./build/client.ts";
+export { KEYWORD_CARDS, KEYWORD_ENCHANTMENTS } from "./keywords/index.ts";
 export { PF1_CARDS, PF1_ENCHANTMENTS } from "./pf1/index.ts";
 
 /**

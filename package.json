@@ -21,6 +21,9 @@
     "test": "bunx turbo test",
     "spike:colyseus": "cd apps/server && bun run spike",
     "spike:client": "cd apps/client && bun run spike",
+    "play": "bun run apps/cli/src/index.ts play",
+    "replay": "bun run apps/cli/src/index.ts replay",
+    "sim": "bun run apps/cli/src/index.ts sim",
     "ir:print": "bun run apps/cli/src/ir/print.ts"
   },
   "devDependencies": {

@@ -1,0 +1,50 @@
+{
+  "name": "color-gate-blackout",
+  "scenario": "英雄阵亡后色门锁定并在下一回合解锁",
+  "seed": 105,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "alternate",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [["GOLDEN_BLUE_CARD"], ["GOLDEN_BLUE_STRIKER"]],
+  "heroes": [["GOLDEN_HERO_BLUE"], ["GOLDEN_HERO_RED"]],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    {
+      "t": "deploy",
+      "player": 0,
+      "picks": [[{ "hero": 5, "slot": 0 }], [{ "hero": 6, "slot": 0 }]]
+    },
+    { "t": "pass", "player": 0 },
+    { "t": "play_card", "player": 1, "card": 4, "slot": 1 },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 },
+    { "t": "pass", "player": 1 },
+    { "t": "play_card", "player": 0, "card": 3, "slot": 1 },
+    { "t": "pass", "player": 0 },
+    {
+      "t": "deploy",
+      "player": 0,
+      "picks": [[{ "hero": 5, "slot": 0 }], [{ "hero": 6, "slot": 0 }]]
+    },
+    { "t": "play_card", "player": 0, "card": 3, "slot": 1 }
+  ],
+  "expectedEvents": ["hero_deployed", "hero_died"],
+  "expectedEventCounts": { "hero_deployed": 4, "hero_died": 2, "card_played": 2 },
+  "expectedEventSequence": [
+    { "name": "hero_deployed", "target": 5, "cardId": "GOLDEN_HERO_BLUE", "slot": 0 },
+    { "name": "hero_died", "target": 5, "slot": 0, "respawnAt": 3 },
+    { "name": "hero_deployed", "target": 5, "cardId": "GOLDEN_HERO_BLUE", "slot": 0 },
+    { "name": "card_played", "target": 3, "cardId": "GOLDEN_BLUE_CARD" }
+  ],
+  "expectedRejects": ["color_locked"],
+  "messagesPerSeat": [[], []]
+}

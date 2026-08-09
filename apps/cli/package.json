@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@prismfront/ir": "workspace:*",
+    "@prismfront/cards": "workspace:*",
     "@prismfront/engine": "workspace:*",
     "@prismfront/bot": "workspace:*",
     "@prismfront/shared": "workspace:*"
@@ -17,6 +18,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "ir:print": "bun run src/ir/print.ts"
+    "ir:print": "bun run src/ir/print.ts",
+    "sim": "bun run src/index.ts sim"
   }
 }

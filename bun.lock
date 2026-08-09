@@ -14,6 +14,7 @@
       "name": "@prismfront/cli",
       "dependencies": {
         "@prismfront/bot": "workspace:*",
+        "@prismfront/cards": "workspace:*",
         "@prismfront/engine": "workspace:*",
         "@prismfront/ir": "workspace:*",
         "@prismfront/shared": "workspace:*",

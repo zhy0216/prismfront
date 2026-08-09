@@ -1,0 +1,39 @@
+{
+  "name": "discover-suspend",
+  "scenario": "discover 挂起点与恢复协议",
+  "seed": 107,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "alternate",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [["GOLDEN_BLUE_STRIKER", "GOLDEN_BLUE_STRIKER", "PF1_B01"], []],
+  "heroes": [["GOLDEN_HERO_BLUE"], []],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    { "t": "deploy", "player": 0, "picks": [[{ "hero": 6, "slot": 0 }], []] },
+    { "t": "play_card", "player": 0, "card": 3, "slot": 1 },
+    { "t": "pass", "player": 1 },
+    { "t": "play_card", "player": 0, "card": 4, "slot": 2 },
+    { "t": "pass", "player": 1 },
+    { "t": "play_card", "player": 0, "card": 5, "slot": 3 },
+    { "t": "respond", "player": 0, "chosen": "GOLDEN_OPTION_B" }
+  ],
+  "expectedEvents": ["hero_deployed"],
+  "expectedEventCounts": { "card_played": 3, "unit_summoned": 3 },
+  "expectedEventSequence": [
+    { "name": "card_played", "target": 5, "cardId": "PF1_B01" },
+    { "name": "unit_summoned", "target": 5, "cardId": "PF1_B01", "slot": 3 }
+  ],
+  "expectedPending": true,
+  "suspendCard": "PF1_B01",
+  "suspendOptions": ["GOLDEN_OPTION_A", "GOLDEN_OPTION_B"],
+  "messagesPerSeat": [[], []]
+}

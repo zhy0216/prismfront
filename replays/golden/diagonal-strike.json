@@ -1,0 +1,34 @@
+{
+  "name": "diagonal-strike",
+  "scenario": "direction +1/-1 斜向出手",
+  "seed": 103,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "alternate",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [["GOLDEN_DIAGONAL", "GOLDEN_DIAGONAL_NEG"], ["GOLDEN_BLUE_STRIKER", "GOLDEN_BLUE_STRIKER"]],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    { "t": "play_card", "player": 0, "card": 3, "slot": 1 },
+    { "t": "play_card", "player": 1, "card": 5, "slot": 2 },
+    { "t": "play_card", "player": 0, "card": 4, "slot": 4 },
+    { "t": "play_card", "player": 1, "card": 6, "slot": 3 },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 }
+  ],
+  "expectedEvents": ["struck", "damaged"],
+  "expectedEventCounts": { "struck": 4 },
+  "expectedEventSequence": [
+    { "name": "struck", "source": 3, "target": 5, "amount": 2 },
+    { "name": "struck", "source": 4, "target": 6, "amount": 2 }
+  ],
+  "messagesPerSeat": [[], []]
+}

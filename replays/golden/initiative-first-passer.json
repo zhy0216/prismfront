@@ -1,0 +1,35 @@
+{
+  "name": "initiative-first-passer",
+  "scenario": "initiative: first_passer 跨回合回放",
+  "seed": 108,
+  "rules": {
+    "board": { "slots": 9 },
+    "crystals": { "initial": 5, "growth": 1, "capMax": 10 },
+    "pass": { "combatAfterConsecutivePasses": 2 },
+    "initiative": "first_passer",
+    "baseHp": 30,
+    "deck": { "size": 30, "maxCopies": 2, "startingHand": 4, "drawPerRound": 1, "fatigue": true },
+    "playerActions": ["play_card"],
+    "actionSeconds": 30,
+    "reconnectSeconds": 90,
+    "heroes": { "perDeck": 3, "deploySchedule": [2, 1], "respawnDelay": 1 }
+  },
+  "decks": [[], []],
+  "intents": [
+    { "t": "mulligan", "player": 0, "toss": [[], []] },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 },
+    { "t": "pass", "player": 0 },
+    { "t": "pass", "player": 1 }
+  ],
+  "expectedEvents": ["combat_began"],
+  "expectedEventCounts": { "combat_began": 3 },
+  "expectedEventSequence": [
+    { "name": "combat_began", "round": 1 },
+    { "name": "combat_began", "round": 2 },
+    { "name": "combat_began", "round": 3 }
+  ],
+  "messagesPerSeat": [[], []]
+}

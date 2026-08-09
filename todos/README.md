@@ -62,7 +62,7 @@ M0 ── M1 ── M2 ── M3 ── M4 ── M5 ── M6 ── M7 ── 
 | [M5](./done/M05-触发拦截光环.md) | 触发 / 拦截 / 光环 ★ | 三分体系、附魔 | Artifact 四关键词可写 | 3–5d | ✅ |
 | [M6](./done/M06-英雄色门融合复燃泉.md) | 英雄 / 色门 / 融合 / 复燃泉 | v2.1 全套 | 色门与复活测试 | 3–4d | ✅ |
 | [M7](./done/M07-视图投影与合法动作.md) | 视图投影与合法动作 | `project` / `legalActions` | 隐藏信息 grep 测试 | 2–3d | ✅ |
-| [M8](./M08-bot-CLI-fuzz-golden-replay.md) | bot / CLI / fuzz / golden replay ★ | 可 headless 对打 | 10 万局 fuzz 无失败 | 3–5d | ☐ |
+| [M8](./done/M08-bot-CLI-fuzz-golden-replay.md) | bot / CLI / fuzz / golden replay ★ | 可 headless 对打 | 10 万局 fuzz 无失败 | 3–5d | ✅ |
 | [M9](./M09-Colyseus服务端.md) | Colyseus 服务端 | 房间、计时、重连 | 两端打完一局 | 3–4d | ☐ |
 | [M10](./M10-Phaser客户端.md) | Phaser 客户端 | 可玩界面 | 浏览器打完一局 | 8–12d | ☐ |
 | [M11](./M11-PF1全卡池与lint.md) | PF1 全卡池与 lint | 33 卡 + 3 英雄 | `bunx turbo ir:validate` | 4–5d | ☐ |
