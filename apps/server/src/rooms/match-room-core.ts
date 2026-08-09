@@ -387,6 +387,7 @@ export class MatchRoomCore {
     }
     seat.connected = true;
     seat.client = client;
+    this.sendSeat(seat);
     this.sendSnapshot(seat);
     this.armActionTimer();
   }
@@ -394,6 +395,9 @@ export class MatchRoomCore {
   resync(playerId: string): void {
     const seat = this.seats.get(playerId);
     if (seat?.connected) {
+      // A Colyseus join may resolve before application message handlers are attached.
+      // Resync therefore restores the complete protocol identity, not only state.
+      this.sendSeat(seat);
       this.sendSnapshot(seat);
     }
   }

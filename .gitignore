@@ -13,6 +13,10 @@ reports/
 
 # ir:build 同时写入客户端的生成物（架构文档 §5.2），由构建重新产出
 apps/client/src/generated/
+!apps/client/src/generated/
+apps/client/src/generated/*
+!apps/client/src/generated/replays/
+!apps/client/src/generated/replays/*.json
 
 # 环境变量
 .env

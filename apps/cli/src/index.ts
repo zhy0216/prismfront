@@ -24,6 +24,7 @@ import {
   legalActions,
   moveHandler,
   project,
+  projectEvent,
   pushAct,
   type ResolveDeps,
   suspend,
@@ -474,6 +475,21 @@ async function replay(args: readonly string[]): Promise<number> {
   hydrateCardFaces(state);
   const deps = depsForReplay(replayFile);
   const step = args.includes("--step");
+  const writeMessages = args.includes("--write-messages");
+  const messagesPerSeat: [unknown[], unknown[]] = [[], []];
+  for (const seat of [0, 1] as const) {
+    messagesPerSeat[seat].push(
+      { t: "seat", version: 1, seq: state.seq, playerId: `replay-${seat}`, seat },
+      {
+        t: "snapshot",
+        version: 1,
+        seq: state.seq,
+        playerId: `replay-${seat}`,
+        view: project(state, seat),
+        legal: legalActions(state, seat, deps),
+      },
+    );
+  }
   const events: GameEvent[] = [];
   const eventNames: string[] = [];
   const rejected: string[] = [];
@@ -486,6 +502,12 @@ async function replay(args: readonly string[]): Promise<number> {
     const result = apply(state, intent, deps);
     if (!result.ok) {
       rejected.push(result.code);
+      messagesPerSeat[intent.player].push({
+        t: "rejected",
+        version: 1,
+        seq: state.seq,
+        code: result.code,
+      });
       console.log(`[${index}] rejected=${result.code}`);
       continue;
     }
@@ -496,6 +518,35 @@ async function replay(args: readonly string[]): Promise<number> {
       events.push(event);
       eventNames.push(event.name);
       console.log(`  ${JSON.stringify(event)}`);
+    }
+    for (const seat of [0, 1] as const) {
+      messagesPerSeat[seat].push(
+        {
+          t: "events",
+          version: 1,
+          seq: state.seq,
+          events: result.events
+            .map((event) => projectEvent(state, event, seat))
+            .filter((event): event is NonNullable<typeof event> => event !== null),
+        },
+        {
+          t: "snapshot",
+          version: 1,
+          seq: state.seq,
+          playerId: `replay-${seat}`,
+          view: project(state, seat),
+          legal: legalActions(state, seat, deps),
+        },
+      );
+      const request = project(state, seat).pendingInput;
+      if (request?.player === seat) {
+        messagesPerSeat[seat].push({
+          t: "prompt",
+          version: 1,
+          seq: state.seq,
+          request,
+        });
+      }
     }
     if (step) {
       console.log(
@@ -536,6 +587,13 @@ async function replay(args: readonly string[]): Promise<number> {
   }
   if (replayFile.expectedPending === true && !sawPending) {
     throw new Error("golden replay 未命中期望的挂起点");
+  }
+  if (writeMessages) {
+    const persisted = { ...replayFile, messagesPerSeat };
+    await Bun.write(path, `${JSON.stringify(persisted, null, 2)}\n`);
+    console.log(
+      `messages=${messagesPerSeat[0].length}/${messagesPerSeat[1].length} written=${path}`,
+    );
   }
   console.log(`over=${state.winner ?? "draw"} round=${state.round} seq=${state.seq}`);
   return 0;

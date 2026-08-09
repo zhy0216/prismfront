@@ -88,6 +88,7 @@ export interface VisibleEntity {
   readonly slot: number | null;
   readonly tags: TagValues;
   readonly damage: number;
+  readonly respawnAt: number | null;
 }
 
 export interface HiddenEntity {
@@ -152,6 +153,9 @@ export interface ClientEvent {
   readonly toCardId?: CardId | null;
   readonly amount?: number;
   readonly slot?: number;
+  readonly fromSlot?: number;
+  readonly toSlot?: number;
+  readonly respawnAt?: number;
   readonly round?: number;
 }
 

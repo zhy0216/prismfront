@@ -21,7 +21,7 @@
 //   只会还原 dist/，不会还原 apps/client/src/generated/**。那个目录被删掉之后要恢复，
 //   跑 `bunx turbo ir:build --force`（或直接 `bun run ir:build`）。
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   buildBundle,
   CARD_SOURCES,
@@ -33,6 +33,8 @@ import {
 /** 路径一律从模块自身解析，不吃 cwd —— turbo 与手跑的 cwd 不一定相同。 */
 const DIST_DIR = new URL("../dist/", import.meta.url);
 const CLIENT_GENERATED_DIR = new URL("../../../apps/client/src/generated/", import.meta.url);
+const CLIENT_REPLAY_DIR = new URL("replays/", CLIENT_GENERATED_DIR);
+const GOLDEN_REPLAY_DIR = new URL("../../../replays/golden/", import.meta.url);
 
 /**
  * 产物用两空格缩进写出，不用紧凑形式。
@@ -60,6 +62,23 @@ const written = [
   writeJson(DIST_DIR, "cards.client.json", client),
   writeJson(CLIENT_GENERATED_DIR, "cards.client.json", client),
 ];
+
+mkdirSync(CLIENT_REPLAY_DIR, { recursive: true });
+for (const file of [
+  "beam-through-empty.json",
+  "color-gate-blackout.json",
+  "combat-tradeoff.json",
+  "deploy-r1-r2.json",
+  "diagonal-strike.json",
+  "discover-suspend.json",
+  "initiative-first-passer.json",
+  "thorns-dies-but-retaliates.json",
+]) {
+  writeFileSync(
+    new URL(file, CLIENT_REPLAY_DIR),
+    readFileSync(new URL(file, GOLDEN_REPLAY_DIR), "utf8"),
+  );
+}
 
 console.log(
   `ir:build ✓ ${bundle.bundleId}（irVersion ${bundle.irVersion}）` +

@@ -4,10 +4,28 @@
 // "none"。Colyseus 的 API 和 MatchRoom 生命周期适配器都只在 transport/ 下出现。
 
 import { CARD_SOURCES, ENCHANTMENT_SOURCES } from "@prismfront/cards";
+import { defineCard } from "@prismfront/ir";
 import { startColyseusServer } from "./transport/colyseus.ts";
 import { MatchRoom } from "./transport/match-room.ts";
 
-MatchRoom.cardRegistry = { cards: CARD_SOURCES, enchantments: ENCHANTMENT_SOURCES };
+// A tiny colourless card keeps the browser smoke harness deterministic without
+// coupling it to a particular PF1 faction/light source setup. It is not part
+// of the published card bundle; it only exists for the demo room's deck.
+const DEMO_CARD = defineCard({
+  id: "DEMO_CARD",
+  name: "Demo unit",
+  kind: "minion",
+  cost: 0,
+  colors: [],
+  collectible: false,
+  atk: 1,
+  health: 1,
+});
+
+MatchRoom.cardRegistry = {
+  cards: [...CARD_SOURCES, DEMO_CARD],
+  enchantments: ENCHANTMENT_SOURCES,
+};
 
 export type {
   MatchResultRecord,
