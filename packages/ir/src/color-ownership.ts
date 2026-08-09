@@ -173,8 +173,11 @@ export const COLOR_OWNERSHIP = [
   {
     id: "buff",
     label: "属性增益 / 光环",
-    ops: ["act.buff"],
-    tagKeys: [],
+    // act.buff only references an enchantment id; its actual mods live in the
+    // bundle.enchantments table. Route direct tag writes through the same
+    // tag-key path, so set_tag/mod_tag cannot bypass the colour wheel.
+    ops: [],
+    tagKeys: ["atk", "health"],
     flags: [],
     keywords: ["aura"],
     ownership: { red: "secondary", blue: "forbidden", green: "primary" },
@@ -263,6 +266,13 @@ export type OwnedOp = (typeof COLOR_OWNERSHIP)[number]["ops"][number];
 /** 表里登记的关键词字面量联合。 */
 export type OwnedKeyword = (typeof COLOR_OWNERSHIP)[number]["keywords"][number];
 
+/** A capability occurrence exposed by the IR walker. */
+export type Occurrence =
+  | { readonly kind: "op"; readonly op: string }
+  | { readonly kind: "tagKey"; readonly tagKey: string }
+  | { readonly kind: "flag"; readonly flag: string }
+  | { readonly kind: "keyword"; readonly keyword: string };
+
 // ---------------------------------------------------------------------------
 // 派生索引（唯一真相仍是上面的 COLOR_OWNERSHIP，这里只是它的倒排）
 // ---------------------------------------------------------------------------
@@ -293,6 +303,19 @@ const BY_OP = invert((entry) => entry.ops);
 const BY_TAG_KEY = invert((entry) => entry.tagKeys);
 const BY_FLAG = invert((entry) => entry.flags);
 const BY_KEYWORD = invert((entry) => entry.keywords);
+
+function capabilitiesForOccurrence(occurrence: Occurrence): readonly CapabilityEntry[] {
+  switch (occurrence.kind) {
+    case "op":
+      return capabilitiesForOp(occurrence.op);
+    case "tagKey":
+      return capabilitiesForTagKey(occurrence.tagKey);
+    case "flag":
+      return capabilitiesForFlag(occurrence.flag);
+    case "keyword":
+      return capabilitiesForKeyword(occurrence.keyword);
+  }
+}
 
 /** 按 id 取一行。未登记返回 undefined。 */
 export function capabilityById(id: string): CapabilityEntry | undefined {
@@ -344,8 +367,13 @@ function looser(current: Ownership | undefined, candidate: Ownership): Ownership
  *          （= 该 op 不受色轮约束，例如 act.when、act.gain_crystal）。
  */
 export function ownershipOf(color: Color, op: string): Ownership | undefined {
+  return ownershipOfOccurrence(color, { kind: "op", op });
+}
+
+/** Single-colour ownership lookup for any IR occurrence kind. */
+export function ownershipOfOccurrence(color: Color, occurrence: Occurrence): Ownership | undefined {
   let rank: Ownership | undefined;
-  for (const entry of capabilitiesForOp(op)) {
+  for (const entry of capabilitiesForOccurrence(occurrence)) {
     rank = looser(rank, entry.ownership[color]);
   }
   return rank;
@@ -373,9 +401,17 @@ export function ownsOp(color: Color, op: string): boolean {
  * colors 为空数组时返回 undefined。
  */
 export function ownershipForColors(colors: readonly Color[], op: string): Ownership | undefined {
+  return ownershipForColorsOfOccurrence(colors, { kind: "op", op });
+}
+
+/** Multi-colour ownership lookup for any IR occurrence kind. */
+export function ownershipForColorsOfOccurrence(
+  colors: readonly Color[],
+  occurrence: Occurrence,
+): Ownership | undefined {
   let rank: Ownership | undefined;
   for (const color of colors) {
-    const candidate = ownershipOf(color, op);
+    const candidate = ownershipOfOccurrence(color, occurrence);
     if (candidate !== undefined) {
       rank = looser(rank, candidate);
     }
@@ -385,7 +421,16 @@ export function ownershipForColors(colors: readonly Color[], op: string): Owners
 
 /** `ownsOp` 的多色版本，直接吃 `card.data.colors`（v2 §11.4）。 */
 export function colorsOwnOp(colors: readonly Color[], op: string): boolean {
-  return ownershipForColors(colors, op) !== "forbidden";
+  return ownershipForColorsOfOccurrence(colors, { kind: "op", op }) !== "forbidden";
+}
+
+/** Whether at least one colour in a card's fusion identity permits occurrence. */
+export function ownsOccurrence(color: Color, occurrence: Occurrence): boolean {
+  return ownershipOfOccurrence(color, occurrence) !== "forbidden";
+}
+
+export function ownsOccurrenceForColors(colors: readonly Color[], occurrence: Occurrence): boolean {
+  return ownershipForColorsOfOccurrence(colors, occurrence) !== "forbidden";
 }
 
 /** 该颜色的 op 禁区清单，供 lint 报错时列举「你不该用的东西」。 */

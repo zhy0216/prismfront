@@ -105,7 +105,6 @@ test("★ 登记的每个 op 都真实存在于 Act 词汇表（改 types/act.ts
 test("登记的 op 集合快照（改表要两处同改）", () => {
   const ops = TABLE.flatMap((entry) => [...entry.ops]).sort();
   expect(ops).toEqual([
-    "act.buff",
     "act.destroy",
     "act.discover",
     "act.draw",
@@ -174,7 +173,7 @@ test("三色各自的 op 禁区清单", () => {
     "act.swap",
     "act.transform",
   ]);
-  expect([...forbiddenOpsFor("blue")].sort()).toEqual(["act.buff", "act.strike", "act.summon"]);
+  expect([...forbiddenOpsFor("blue")].sort()).toEqual(["act.strike", "act.summon"]);
   expect([...forbiddenOpsFor("green")].sort()).toEqual([
     "act.destroy",
     "act.hit",
@@ -241,7 +240,7 @@ test("方向操作按 TagKey 匹配，不按 op —— set_tag/mod_tag 本身不
   // 绿卡写 act.mod_tag(atk) 合法，写 act.mod_tag(direction) 才越权
   expect(capabilitiesForOp("act.mod_tag")).toEqual([]);
   expect(ownsOp("green", "act.mod_tag")).toBe(true);
-  expect(capabilitiesForTagKey("atk")).toEqual([]);
+  expect(capabilitiesForTagKey("atk").map((entry) => entry.id)).toEqual(["buff"]);
 });
 
 test("眩晕 / 圣盾按 FlagName 匹配（都没有独占 op）", () => {
