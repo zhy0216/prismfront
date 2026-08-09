@@ -204,6 +204,17 @@ export function validateRulesConfig(rules: RulesConfig): void {
 
   // ── 英雄（v2.1 §11.5）────────────────────────────────────────────────────
   validateHeroes(rules.heroes);
+  if (rules.heroes.cardsPerHero !== undefined) {
+    requireCountAtLeast("heroes.cardsPerHero", rules.heroes.cardsPerHero, 1);
+    const derivedDeckSize = rules.heroes.perDeck * rules.heroes.cardsPerHero;
+    if (rules.deck.size !== derivedDeckSize) {
+      throw new RulesConfigError(
+        "deck.size",
+        rules.deck.size,
+        `必须等于 heroes.perDeck × heroes.cardsPerHero（${derivedDeckSize}）`,
+      );
+    }
+  }
 }
 
 /**

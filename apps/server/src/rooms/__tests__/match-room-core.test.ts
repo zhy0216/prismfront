@@ -26,6 +26,7 @@ function smallOptions(overrides: Partial<MatchRoomOptions> = {}): MatchRoomOptio
       ...DEFAULT_RULES,
       baseHp: 2,
       deck: { ...DEFAULT_RULES.deck, size: 1, startingHand: 1 },
+      heroes: { ...DEFAULT_RULES.heroes, perDeck: 1, cardsPerHero: 1, deploySchedule: [1] },
     },
     decks: [["P0_HIDDEN"], ["P1_HIDDEN"]],
     firstPlayer: 0,

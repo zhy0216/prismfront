@@ -28,9 +28,15 @@ export const DEFAULT_RULES = {
   pass: { combatAfterConsecutivePasses: 2 },
   initiative: "alternate",
   baseHp: 30,
-  deck: { size: 30, maxCopies: 2, startingHand: 4, drawPerRound: 1, fatigue: true },
+  deck: { size: 30, maxCopies: 3, startingHand: 4, drawPerRound: 1, fatigue: true },
   playerActions: ["play_card"],
   actionSeconds: 30,
   reconnectSeconds: 90,
-  heroes: { perDeck: 3, deploySchedule: [2, 1], respawnDelay: 1 },
+  heroes: {
+    perDeck: 3,
+    deploySchedule: [2, 1],
+    respawnDelay: 1,
+    allowDuplicates: false,
+    cardsPerHero: 10,
+  },
 } as const satisfies RulesConfig;
