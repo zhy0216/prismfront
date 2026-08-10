@@ -40,11 +40,15 @@ export class BootScene extends Scene {
       const dots = spec.colorDots.map((color, index) =>
         this.add.circle(-78 + index * 26, -140, 9, color).setStrokeStyle(2, 0xffffff),
       );
-      const face = this.add
-        .container(120, 170, [frame, art, name, stats, ...dots])
-        .setVisible(false);
+      const face = this.add.container(120, 170, [frame, art, name, stats, ...dots]);
       const texture = this.add.renderTexture(0, 0, 240, 340).setVisible(false);
-      texture.draw(face).saveTexture(spec.key);
+      // Phaser 4 buffers RenderTexture draw commands. Flush them before the
+      // temporary compositor objects are destroyed, otherwise the saved card
+      // texture is transparent. The source container must also stay visible
+      // while it is being drawn; it is destroyed before the first frame.
+      texture.draw(face);
+      texture.render();
+      texture.saveTexture(spec.key);
       texture.destroy();
       face.destroy(true);
     }

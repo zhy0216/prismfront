@@ -384,10 +384,11 @@ export class MatchScene extends Scene {
     graphics.lineStyle(5, 0xcce7ff, 0.8).strokeRoundedRect(2, 2, 236, 336, 14);
     const text = this.add
       .text(120, 170, label, { color: "#ffffff", fontSize: "22px", wordWrap: { width: 210 } })
-      .setOrigin(0.5)
-      .setVisible(false);
+      .setOrigin(0.5);
     const texture = this.add.renderTexture(0, 0, 240, 340).setVisible(false);
-    texture.draw(graphics).draw(text).saveTexture(key);
+    texture.draw(graphics).draw(text);
+    texture.render();
+    texture.saveTexture(key);
     texture.destroy();
     text.destroy();
     graphics.destroy();
