@@ -1,6 +1,11 @@
 import type { ClientIntent, PlayerId, ServerMsg, SnapshotMsg, Transport } from "@prismfront/shared";
 import { ColyseusTransport } from "./colyseus.ts";
 
+export interface HotseatAutomation {
+  readonly seats: readonly PlayerId[];
+  readonly fixedSeat?: PlayerId;
+}
+
 /** Two authenticated room connections presented as one same-screen transport. */
 export class HotseatTransport implements Transport {
   private readonly peers: readonly [ColyseusTransport, ColyseusTransport];
@@ -8,16 +13,22 @@ export class HotseatTransport implements Transport {
   private readonly seatByPeer: [PlayerId | null, PlayerId | null] = [null, null];
   private readonly snapshots: [SnapshotMsg | null, SnapshotMsg | null] = [null, null];
   private active: PlayerId = 0;
-  private readonly autoSetup: boolean;
+  private readonly autoSeats: ReadonlySet<PlayerId>;
+  private readonly fixedSeat: PlayerId | null;
+  private readonly concedeAfterFirstCard: boolean;
   private readonly autoSubmitted = new Set<string>();
   private autoTimer: ReturnType<typeof setInterval> | null = null;
   private autoSeq = -1;
   constructor(
     endpoint: string,
     options: Readonly<Record<string, unknown>> = {},
-    autoSetup = false,
+    automation: boolean | HotseatAutomation = false,
   ) {
-    this.autoSetup = autoSetup;
+    this.autoSeats = new Set(
+      typeof automation === "boolean" ? (automation ? [0, 1] : []) : automation.seats,
+    );
+    this.fixedSeat = typeof automation === "boolean" ? null : (automation.fixedSeat ?? null);
+    this.concedeAfterFirstCard = automation === true;
     this.peers = [
       new ColyseusTransport(endpoint, "match", options),
       new ColyseusTransport(endpoint, "match", options),
@@ -40,10 +51,11 @@ export class HotseatTransport implements Transport {
     setTimeout(() => {
       for (const peer of this.peers) peer.requestResync();
     }, 150);
-    if (this.autoSetup) {
+    if (this.autoSeats.size > 0) {
       this.autoTimer = setInterval(() => {
         for (const [index, snapshot] of this.snapshots.entries()) {
-          if (snapshot !== null) this.scheduleAuto(index as PlayerId, snapshot);
+          const seat = index as PlayerId;
+          if (snapshot !== null && this.autoSeats.has(seat)) this.scheduleAuto(seat, snapshot);
         }
       }, 100);
     }
@@ -79,7 +91,11 @@ export class HotseatTransport implements Transport {
     if (message.t === "snapshot") {
       this.snapshots[seat] = message;
       this.autoSeq = Math.max(this.autoSeq, message.seq);
-      if (this.autoSetup) this.scheduleAuto(seat, message);
+      if (this.autoSeats.has(seat)) this.scheduleAuto(seat, message);
+      if (this.fixedSeat !== null) {
+        if (seat === this.fixedSeat) this.activate(seat, message);
+        return;
+      }
       if (
         (message.view.phase === "mulligan" || message.view.phase === "deploy") &&
         seat !== this.active &&
@@ -94,16 +110,22 @@ export class HotseatTransport implements Transport {
     }
     // Terminal is room-wide, not seat-private. It must not be lost when the
     // active presentation seat changed on the final snapshot.
-    if (message.t === "rejected" && this.autoSetup) {
+    if (message.t === "rejected" && this.autoSeats.has(seat)) {
       for (const key of this.autoSubmitted) {
         if (key.includes(`:${message.seq}:`)) this.autoSubmitted.delete(key);
       }
       for (const [index, snapshot] of this.snapshots.entries()) {
-        if (snapshot !== null) this.scheduleAuto(index as PlayerId, snapshot);
+        const autoSeat = index as PlayerId;
+        if (snapshot !== null && this.autoSeats.has(autoSeat)) {
+          this.scheduleAuto(autoSeat, snapshot);
+        }
       }
     }
-    if (message.t === "events" && this.autoSetup) {
-      if (message.events.some((event) => event.name === "card_played")) {
+    if (message.t === "events" && this.autoSeats.size > 0) {
+      if (
+        this.concedeAfterFirstCard &&
+        message.events.some((event) => event.name === "card_played")
+      ) {
         const seat = this.active;
         const key = `${seat}:${message.seq}:concede`;
         if (!this.autoSubmitted.has(key)) {
@@ -115,8 +137,15 @@ export class HotseatTransport implements Transport {
         }
       }
       for (const [index, snapshot] of this.snapshots.entries()) {
-        if (snapshot !== null) this.scheduleAuto(index as PlayerId, snapshot);
+        const autoSeat = index as PlayerId;
+        if (snapshot !== null && this.autoSeats.has(autoSeat)) {
+          this.scheduleAuto(autoSeat, snapshot);
+        }
       }
+    }
+    if (this.fixedSeat !== null) {
+      if (seat === this.fixedSeat) this.emit(message);
+      return;
     }
     if (message.t === "over" || message.t === "events" || seat === this.active) this.emit(message);
   }

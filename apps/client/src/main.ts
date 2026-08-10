@@ -34,7 +34,8 @@ if (replay === undefined) throw new Error("missing bundled replay");
 const seat = query.get("seat") === "1" ? 1 : 0;
 const server = query.get("server");
 const hotseat = query.get("hotseat");
-const endpoint = hotseat ?? server;
+const pve = query.get("pve");
+const endpoint = pve ?? hotseat ?? server;
 const demoOptions = {
   seed: 7001,
   firstPlayer: 0,
@@ -59,13 +60,15 @@ const demoOptions = {
 const transport =
   endpoint === null
     ? new MockTransport(replay, seat)
-    : hotseat === null
-      ? new ColyseusTransport(endpoint, "match", demoOptions)
-      : new HotseatTransport(endpoint, demoOptions, query.has("autoplay"));
+    : pve !== null
+      ? new HotseatTransport(endpoint, demoOptions, { seats: [1], fixedSeat: 0 })
+      : hotseat === null
+        ? new ColyseusTransport(endpoint, "match", demoOptions)
+        : new HotseatTransport(endpoint, demoOptions, query.has("autoplay"));
 document.body.dataset.replay = replay.name;
 document.body.dataset.eventCount = "0";
 document.body.dataset.transport =
-  hotseat !== null ? "hotseat" : server !== null ? "online" : "mock";
+  pve !== null ? "pve" : hotseat !== null ? "hotseat" : server !== null ? "online" : "mock";
 
 new Game({
   type: AUTO,
@@ -89,6 +92,6 @@ if (query.has("disconnect")) {
         transport.simulateDisconnect();
       }
     },
-    query.has("hotseat") ? 1_000 : 2_000,
+    query.has("hotseat") || query.has("pve") ? 1_000 : 2_000,
   );
 }

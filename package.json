@@ -23,6 +23,8 @@
     "spike:client": "cd apps/client && bun run spike",
     "play": "bun run apps/cli/src/index.ts play",
     "play:online": "cd apps/server && bun run play:online",
+    "pve": "bun run scripts/browser-dev.ts pve",
+    "pvp": "bun run scripts/browser-dev.ts pvp",
     "replay": "bun run apps/cli/src/index.ts replay",
     "sim": "bun run apps/cli/src/index.ts sim",
     "ir:print": "bun run apps/cli/src/ir/print.ts",
