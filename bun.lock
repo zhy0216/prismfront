@@ -27,6 +27,8 @@
       "name": "@prismfront/client",
       "dependencies": {
         "@colyseus/sdk": "catalog:client",
+        "@prismfront/cards": "workspace:*",
+        "@prismfront/ir": "workspace:*",
         "@prismfront/shared": "workspace:*",
         "phaser": "catalog:client",
       },

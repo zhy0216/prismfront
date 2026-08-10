@@ -1,3 +1,5 @@
+import { PRESET_HEROES, PRESET_NAMES, type PresetName, presetDeck } from "@prismfront/cards";
+import { DEFAULT_RULES_CONFIG } from "@prismfront/ir";
 import { AUTO, Game, Scale } from "phaser";
 import { RENDER_HEIGHT, RENDER_WIDTH } from "./core/rendering.ts";
 import beamThroughEmpty from "./generated/replays/beam-through-empty.json";
@@ -57,11 +59,23 @@ const demoOptions = {
     ["DEMO_CARD", "DEMO_CARD"],
   ],
 } as const;
+// PvE 走真实 PF1 规则与预构筑：`?preset=concentrated|spread|mixed` 换卡组，`?seed=` 固定洗牌。
+const presetParam = query.get("preset") as PresetName | null;
+const preset: PresetName =
+  presetParam !== null && PRESET_NAMES.includes(presetParam) ? presetParam : "concentrated";
+const pveOptions = {
+  seed: Number(query.get("seed") ?? "7001") || 7001,
+  firstPlayer: 0,
+  actionTimeoutMs: 15_000,
+  rules: DEFAULT_RULES_CONFIG,
+  decks: [presetDeck(preset), presetDeck(preset)],
+  heroes: PRESET_HEROES,
+} as const;
 const transport =
   endpoint === null
     ? new MockTransport(replay, seat)
     : pve !== null
-      ? new HotseatTransport(endpoint, demoOptions, { seats: [1], fixedSeat: 0 })
+      ? new HotseatTransport(endpoint, pveOptions, { seats: [1], fixedSeat: 0 })
       : hotseat === null
         ? new ColyseusTransport(endpoint, "match", demoOptions)
         : new HotseatTransport(endpoint, demoOptions, query.has("autoplay"));

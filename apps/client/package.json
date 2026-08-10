@@ -6,6 +6,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@prismfront/cards": "workspace:*",
+    "@prismfront/ir": "workspace:*",
     "@prismfront/shared": "workspace:*",
     "phaser": "catalog:client",
     "@colyseus/sdk": "catalog:client"
