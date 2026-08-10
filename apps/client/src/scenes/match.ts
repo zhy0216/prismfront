@@ -117,6 +117,11 @@ export class MatchScene extends Scene {
         resolution: RENDER_DENSITY,
       })
       .setOrigin(0.5)
+      // The board is redrawn when the viewer seat is assigned, so creation
+      // order is not enough to keep the result banner above board objects.
+      // Keep it in a dedicated top layer instead of letting slot outlines and
+      // the centre title bleed through the end-of-match message.
+      .setDepth(1_000)
       .setVisible(false);
     this.drawBoard();
     this.director = new Director(new PhaserRenderContext(this));
