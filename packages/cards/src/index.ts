@@ -30,6 +30,13 @@ export {
 } from "./build/deck-validation.ts";
 export { KEYWORD_CARDS, KEYWORD_ENCHANTMENTS } from "./keywords/index.ts";
 export { PF1_CARDS, PF1_ENCHANTMENTS } from "./pf1/index.ts";
+export type { PresetName } from "./pf1/presets.ts";
+export {
+  PF1_PRESETS,
+  PRESET_HEROES,
+  PRESET_NAMES,
+  presetDeck,
+} from "./pf1/presets.ts";
 
 /**
  * 参与构建的全部卡（架构 §2.3 定的对外名字）。

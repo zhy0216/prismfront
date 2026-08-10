@@ -10,6 +10,10 @@ import {
   ENCHANTMENT_SOURCES,
   KEYWORD_CARDS,
   KEYWORD_ENCHANTMENTS,
+  PRESET_HEROES,
+  PRESET_NAMES,
+  type PresetName,
+  presetDeck,
   resolveCreatedAt,
   validateConstructedDeck,
 } from "@prismfront/cards";
@@ -43,7 +47,6 @@ import type {
   Card as ReplayCard,
   RulesConfig,
 } from "@prismfront/ir";
-import { PRESET_HEROES, PRESET_NAMES, type PresetName, presetDeck } from "./pf1-presets.ts";
 
 interface ReplayFile {
   readonly name?: string;

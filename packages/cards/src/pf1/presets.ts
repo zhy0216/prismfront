@@ -1,9 +1,11 @@
-// M12 三套预构筑（决策 #7/#12 定案，见 todos/M12-平衡闭环.md）：
+// PF1 三套预构筑（M12 决策 #7/#12 定案）：
 // 配额制下每名英雄恰好 10 张、同名 ≤3，英雄阵容恒为红+绿+蓝。
 // 三套按曲线与份数策略区分，监控对象是每卡 pick 率与份数分布。
 //
 // 构造规则（validateConstructedDeck 强制）：30 张、每英雄恰好 10 张、
 // 每张卡 hero ∈ 所选英雄、同名 ≤ maxCopies。
+//
+// 只依赖 @prismfront/ir 的类型：cli sim 与 client PvE 共用这一份定义。
 
 import type { CardId } from "@prismfront/ir";
 
