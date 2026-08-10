@@ -1,5 +1,9 @@
 export type Color = "red" | "green" | "blue";
 
+export const CARD_FACE_WIDTH = 240;
+export const CARD_FACE_HEIGHT = 340;
+export const CARD_FACE_RATIO = CARD_FACE_HEIGHT / CARD_FACE_WIDTH;
+
 export interface ClientCardData {
   readonly id: string;
   readonly name: { readonly zh: string; readonly en?: string };

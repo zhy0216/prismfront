@@ -29,6 +29,17 @@ export function slotToWorld(side: ViewSide, index: number): WorldPoint {
   };
 }
 
+/** Return the lane under a world-space point, excluding the gaps between lanes. */
+export function worldPointToSlot(side: ViewSide, x: number, y: number): number | null {
+  if (Math.abs(y - ROW_Y[side]) > SLOT_H / 2) return null;
+  const relativeX = x - BOARD_X0;
+  if (relativeX < 0) return null;
+  const pitch = SLOT_W + SLOT_GAP;
+  const index = Math.floor(relativeX / pitch);
+  if (index < 0 || index >= SLOT_COUNT || relativeX - index * pitch > SLOT_W) return null;
+  return index;
+}
+
 export function absoluteSlotToWorld(viewer: PlayerId, owner: PlayerId, index: number): WorldPoint {
   return slotToWorld(viewSide(viewer, owner), index);
 }

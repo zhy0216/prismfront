@@ -10,6 +10,7 @@ export * from "./core/hotseat.ts";
 export * from "./core/hud.ts";
 export * from "./core/input.ts";
 export * from "./core/layout.ts";
+export * from "./core/rendering.ts";
 export * from "./transport/colyseus.ts";
 export * from "./transport/hotseat.ts";
 export * from "./transport/mock.ts";

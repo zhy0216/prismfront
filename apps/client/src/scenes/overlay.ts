@@ -1,6 +1,7 @@
 import type { PromptMsg, SnapshotMsg } from "@prismfront/shared";
 import { type GameObjects, Scene } from "phaser";
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from "../core/layout.ts";
+import { configureDesignCamera, RENDER_DENSITY } from "../core/rendering.ts";
 import { BUS_EVENTS, MATCH_BUS } from "./match-bus.ts";
 
 const MAX_COLUMNS = 5;
@@ -28,6 +29,7 @@ export class OverlayScene extends Scene {
   }
 
   create(): void {
+    configureDesignCamera(this);
     this.backdrop = this.add
       .rectangle(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2, DESIGN_WIDTH, DESIGN_HEIGHT, 0x070b14, 0.72)
       .setInteractive()
@@ -41,6 +43,7 @@ export class OverlayScene extends Scene {
         align: "center",
         color: "#ffffff",
         fontSize: "32px",
+        resolution: RENDER_DENSITY,
         wordWrap: { width: 1300, useAdvancedWrap: true },
       })
       .setOrigin(0.5)
@@ -113,6 +116,7 @@ export class OverlayScene extends Scene {
           align: "center",
           color: "#ffffff",
           fontSize: "24px",
+          resolution: RENDER_DENSITY,
           wordWrap: { width: BUTTON_WIDTH - 28, useAdvancedWrap: true },
         })
         .setOrigin(0.5);

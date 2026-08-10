@@ -2,6 +2,7 @@ import type { SnapshotMsg } from "@prismfront/shared";
 import { type GameObjects, Scene } from "phaser";
 import type { ClientCardData, Color } from "../core/card-face.ts";
 import { GOLDEN_HERO_COLORS, hudModel } from "../core/hud.ts";
+import { configureDesignCamera, RENDER_DENSITY } from "../core/rendering.ts";
 import cardsBundle from "../generated/cards.client.json";
 import { BUS_EVENTS, MATCH_BUS } from "./match-bus.ts";
 
@@ -26,10 +27,12 @@ export class HudScene extends Scene {
   }
 
   create(): void {
+    configureDesignCamera(this);
     this.panel = this.add.text(48, 888, "HUD", {
       color: "#ffffff",
       fontSize: "24px",
       lineSpacing: 8,
+      resolution: RENDER_DENSITY,
       wordWrap: { width: 250, useAdvancedWrap: true },
     });
     this.lightLabel = this.add
@@ -38,6 +41,7 @@ export class HudScene extends Scene {
         color: "#ffffff",
         fontSize: "24px",
         lineSpacing: 6,
+        resolution: RENDER_DENSITY,
         wordWrap: { width: 1500, useAdvancedWrap: true },
       })
       .setOrigin(0.5, 0);
@@ -48,6 +52,7 @@ export class HudScene extends Scene {
         color: "#ffffff",
         fontSize: "30px",
         padding: { x: 28, y: 16 },
+        resolution: RENDER_DENSITY,
       })
       .setInteractive()
       .on("pointerdown", () => MATCH_BUS.emit(BUS_EVENTS.input, { kind: "pass" }));

@@ -1,5 +1,5 @@
 import { AUTO, Game, Scale } from "phaser";
-import { DESIGN_HEIGHT, DESIGN_WIDTH } from "./core/layout.ts";
+import { RENDER_HEIGHT, RENDER_WIDTH } from "./core/rendering.ts";
 import beamThroughEmpty from "./generated/replays/beam-through-empty.json";
 import colorGateBlackout from "./generated/replays/color-gate-blackout.json";
 import combatTradeoff from "./generated/replays/combat-tradeoff.json";
@@ -73,10 +73,12 @@ document.body.dataset.transport =
 new Game({
   type: AUTO,
   parent: "game-root",
-  width: DESIGN_WIDTH,
-  height: DESIGN_HEIGHT,
+  width: RENDER_WIDTH,
+  height: RENDER_HEIGHT,
   backgroundColor: "#0c1222",
-  scale: { mode: Scale.FIT, autoCenter: Scale.CENTER_BOTH },
+  antialias: true,
+  roundPixels: true,
+  scale: { mode: Scale.FIT, autoCenter: Scale.CENTER_BOTH, autoRound: true },
   scene: [BootScene, new MatchScene(transport), HudScene, OverlayScene],
 });
 
