@@ -26,11 +26,21 @@ export class HudScene extends Scene {
   }
 
   create(): void {
-    this.panel = this.add.text(48, 920, "HUD", { color: "#ffffff", fontSize: "26px" });
-    this.lightLabel = this.add.text(720, 28, "○ 红  ○ 绿  ○ 蓝", {
+    this.panel = this.add.text(48, 888, "HUD", {
       color: "#ffffff",
-      fontSize: "26px",
+      fontSize: "24px",
+      lineSpacing: 8,
+      wordWrap: { width: 250, useAdvancedWrap: true },
     });
+    this.lightLabel = this.add
+      .text(960, 24, "○ 红  ○ 绿  ○ 蓝", {
+        align: "center",
+        color: "#ffffff",
+        fontSize: "24px",
+        lineSpacing: 6,
+        wordWrap: { width: 1500, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5, 0);
     this.timer = this.add.graphics();
     this.add
       .text(1660, 930, "PASS", {
@@ -58,7 +68,8 @@ export class HudScene extends Scene {
   private render(message: SnapshotMsg): void {
     const model = hudModel(message.view, message.legal.player, this.heroColors);
     this.panel.setText(
-      `水晶 ${model.crystals}/${model.crystalCap}   基地 ${model.ownBaseHealth} : ${model.enemyBaseHealth}   ` +
+      `水晶 ${model.crystals}/${model.crystalCap}\n` +
+        `基地 ${model.ownBaseHealth} : ${model.enemyBaseHealth}\n` +
         `复燃泉 ${model.fountain.map((entry) => `${entry.id}(${entry.returnsIn})`).join(" ") || "无"}`,
     );
     this.lightLabel.setText(

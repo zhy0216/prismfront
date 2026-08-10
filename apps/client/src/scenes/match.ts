@@ -22,6 +22,10 @@ import { BUS_EVENTS, MATCH_BUS } from "./match-bus.ts";
 
 const SLOT_FILL = 0x25304a;
 
+function displayCardLabel(label: string): string {
+  return label.replaceAll("_", " ").replaceAll("-", " ");
+}
+
 class PhaserRenderContext implements RenderContext {
   private readonly scene: MatchScene;
 
@@ -330,7 +334,12 @@ export class MatchScene extends Scene {
           0.2,
         );
         const title = this.add
-          .text(0, -36, entity.cardId, { color: "#ffffff", fontSize: "14px" })
+          .text(0, -36, displayCardLabel(entity.cardId), {
+            align: "center",
+            color: "#ffffff",
+            fontSize: "13px",
+            wordWrap: { width: 128, useAdvancedWrap: true },
+          })
           .setOrigin(0.5);
         const stats = this.add
           .text(0, 30, `${entity.tags.atk} / ${entity.tags.health - entity.damage}`, {
@@ -383,7 +392,12 @@ export class MatchScene extends Scene {
     graphics.fillStyle(0x315c8d).fillRoundedRect(0, 0, 240, 340, 14);
     graphics.lineStyle(5, 0xcce7ff, 0.8).strokeRoundedRect(2, 2, 236, 336, 14);
     const text = this.add
-      .text(120, 170, label, { color: "#ffffff", fontSize: "22px", wordWrap: { width: 210 } })
+      .text(120, 170, displayCardLabel(label), {
+        align: "center",
+        color: "#ffffff",
+        fontSize: "22px",
+        wordWrap: { width: 210, useAdvancedWrap: true },
+      })
       .setOrigin(0.5);
     const texture = this.add.renderTexture(0, 0, 240, 340).setVisible(false);
     texture.draw(graphics).draw(text);
