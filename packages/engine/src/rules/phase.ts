@@ -54,9 +54,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // 本文件**没做**的一件事
 // ═══════════════════════════════════════════════════════════════════════════
-// **卡牌的 `play` 脚本**：`play_card` 目前只把牌放到指定格。求值器（M4）已就位，
-// 缺的只是接线（M6）。接入点、以及"那一段必须**内联**、不要压 `<cardId>#play` 的引用
-// 条目"这条规则，见 {@link playCard} 里标出的那一段。
+// 本文件不负责定义卡牌的 `play` 脚本；`play_card` 已在 {@link playCard} 接入脚本。
+// 脚本动作必须**内联**，不要压 `<cardId>#play` 的引用条目。
 
 import type { Act, Duration } from "@prismfront/ir";
 import type { CardLookup } from "../eval/index.ts";
@@ -649,7 +648,13 @@ function applyDeploy(
  * 接入点就是本函数末尾返回的那个 `acts` 数组：把 `act.move` 与卡的 `play` 段一起放进去，
  * 顺序即执行顺序（`resolve/push.ts` 负责那次 LIFO 反转）。
  */
-function playCard(state: GameState, player: PlayerId, card: EntityData, slot: number): StepActs {
+function playCard(
+  state: GameState,
+  player: PlayerId,
+  card: EntityData,
+  slot: number,
+  deps: TriggerDeps,
+): StepActs {
   const data = playerData(state, player);
   data.crystals -= card.tags.cost;
 
@@ -668,18 +673,30 @@ function playCard(state: GameState, player: PlayerId, card: EntityData, slot: nu
   state.consecutivePasses = 0;
   state.priority = opponentOf(player);
 
+  const acts: Act[] = [
+    deps.cards?.(card.cardId)?.kind === "spell"
+      ? {
+          op: "act.move",
+          target: { op: "sel.entity", id: card.id },
+          zone: "graveyard",
+        }
+      : {
+          op: "act.move",
+          target: { op: "sel.entity", id: card.id },
+          zone: "board",
+          // `act.move.side` 的基准是 `entity.owner`（IR v1 §3.4）。被 `act.steal` 偷来的牌
+          // owner 是对手，要 `"opposite"` 才能落到**发起方自己**的战线上。
+          side: card.owner === player ? "owner" : "opposite",
+          pos: slot,
+        },
+  ];
+  const play = deps.scripts?.(card.cardId)?.play;
+  if (play !== undefined && play.length > 0) {
+    acts.push(...play);
+  }
+
   return {
-    acts: [
-      {
-        op: "act.move",
-        target: { op: "sel.entity", id: card.id },
-        zone: "board",
-        // `act.move.side` 的基准是 `entity.owner`（IR v1 §3.4）。被 `act.steal` 偷来的牌
-        // owner 是对手，要 `"opposite"` 才能落到**发起方自己**的战线上。
-        side: card.owner === player ? "owner" : "opposite",
-        pos: slot,
-      },
-    ],
+    acts,
     // SELF = 这张牌自己，与卡牌脚本里 `sel.self` 的绑定一致（M4 接脚本时不用改）。
     ctx: createCtx(card.id),
   };
@@ -976,7 +993,7 @@ function bookkeepIntent(
     case "play_card": {
       const card = getEntity(state, intent.card);
       // 校验已保证它存在；`getEntity` 的 `undefined` 分支不用 `!` 抹掉（本仓硬约束）。
-      return card === undefined ? null : playCard(state, intent.player, card, intent.slot);
+      return card === undefined ? null : playCard(state, intent.player, card, intent.slot, deps);
     }
     case "pass":
       return passAction(state, intent.player);

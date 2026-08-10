@@ -110,7 +110,7 @@ export function legalActions(
         reason = "color_locked";
       } else if (playerData(state, player).crystals < card.tags.cost) {
         reason = "not_enough_crystals";
-      } else if (slots.length === 0) {
+      } else if (cards?.(card.cardId)?.kind !== "spell" && slots.length === 0) {
         reason = "slot_occupied";
       }
     }

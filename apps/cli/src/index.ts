@@ -21,6 +21,7 @@ import {
   createGame,
   DEFAULT_DEPS,
   DEFAULT_RULES,
+  deployCountFor,
   type GameEvent,
   type GameState,
   type HandlerTable,
@@ -42,6 +43,7 @@ import type {
   Card as ReplayCard,
   RulesConfig,
 } from "@prismfront/ir";
+import { PRESET_HEROES, PRESET_NAMES, type PresetName, presetDeck } from "./pf1-presets.ts";
 
 interface ReplayFile {
   readonly name?: string;
@@ -182,6 +184,20 @@ const REPLAY_DEPS: ResolveDeps = {
   enchantments: (id: EnchantId) => REPLAY_ENCHANTMENT_BY_ID.get(id),
 };
 
+const PF1_CARDS: readonly ReplayCard[] = [...CARD_SOURCES];
+const PF1_CARD_BY_ID = new Map(PF1_CARDS.map((card) => [card.id, card]));
+const PF1_ENCHANTMENT_BY_ID = new Map(ENCHANTMENT_SOURCES.map((ench) => [ench.id, ench]));
+const PF1_DEPS: ResolveDeps = {
+  ...DEFAULT_DEPS,
+  cards: (cardId: CardId): CardData | undefined => PF1_CARD_BY_ID.get(cardId)?.data,
+  scripts: (cardId: CardId): CardScript | undefined => PF1_CARD_BY_ID.get(cardId)?.script,
+  enchantments: (id: EnchantId) => PF1_ENCHANTMENT_BY_ID.get(id),
+};
+
+function pf1Deps(): ResolveDeps {
+  return PF1_DEPS;
+}
+
 function depsForReplay(replay: ReplayFile): ResolveDeps {
   if (replay.suspendCard === undefined) {
     return REPLAY_DEPS;
@@ -209,9 +225,12 @@ function depsForReplay(replay: ReplayFile): ResolveDeps {
   return { ...REPLAY_DEPS, handlers };
 }
 
-function hydrateCardFaces(state: GameState): void {
+function hydrateCardFaces(
+  state: GameState,
+  cards: ReadonlyMap<CardId, ReplayCard> = REPLAY_CARD_BY_ID,
+): void {
   for (const entity of Object.values(state.entities)) {
-    const card = REPLAY_CARD_BY_ID.get(entity.cardId);
+    const card = cards.get(entity.cardId);
     if (card === undefined) {
       continue;
     }
@@ -226,18 +245,14 @@ const USAGE = `用法：
   bun run replay <file> --step
   bun run sim --games=1000`;
 
-const SIM_RULES: RulesConfig = {
-  ...DEFAULT_RULES,
-  board: { slots: 1 },
-  baseHp: 2,
-  deck: { ...DEFAULT_RULES.deck, size: 0, startingHand: 0 },
-};
-
 const PLAY_HEROES = [
   "PF1_HERO_RED",
   "PF1_HERO_GREEN",
   "PF1_HERO_BLUE",
 ] as const satisfies readonly CardId[];
+
+const INITIATIVE_NAMES = ["alternate", "first_passer"] as const;
+type SimInitiative = (typeof INITIATIVE_NAMES)[number];
 
 function argValue(args: readonly string[], name: string): string | undefined {
   const prefix = `${name}=`;
@@ -335,10 +350,11 @@ function sameJson(a: unknown, b: unknown): boolean {
 function applyChecked(
   state: GameState,
   intent: Intent,
+  deps: ResolveDeps,
 ): { state: GameState; events: GameEvent[] } | null {
   const before = JSON.stringify(state);
-  const cloneResult = apply(cloneState(state), intent);
-  const result = apply(state, intent);
+  const cloneResult = apply(cloneState(state), intent, deps);
+  const result = apply(state, intent, deps);
   if (result.ok !== cloneResult.ok) {
     throw new Error("clone(state) 与原状态对同一 intent 的接受结果不一致");
   }
@@ -364,15 +380,7 @@ function prepareState(options: RunBotOptions): GameState {
     ...(options.heroes === undefined ? {} : { heroes: options.heroes }),
   } as const;
   const state = createGame(rules, decks, options.seed, createOptions);
-  for (const entity of Object.values(state.entities)) {
-    if (entity.cardId !== "__base") {
-      const power = entity.owner === 0 ? 2 : 1;
-      entity.base.atk = power;
-      entity.base.health = power;
-      entity.tags.atk = power;
-      entity.tags.health = power;
-    }
-  }
+  hydrateCardFaces(state, PF1_CARD_BY_ID);
   assertInvariants(state);
   return state;
 }
@@ -389,8 +397,10 @@ function automaticIntent(state: GameState): Intent {
     return { t: "mulligan", player: 0, toss: [[], []] };
   }
   if (state.phase === "deploy") {
-    const count = state.rules.heroes.deploySchedule[state.round - 1] ?? 0;
     const picks = ([0, 1] as const).map((player) => {
+      // 名额走 deployCountFor（含复活回场），与 checkDeploy 同一口径——
+      // 只算首次排期会在复活回合生成空 picks 被拒，对局卡死在 deploy。
+      const count = deployCountFor(state, player);
       const fountain = state.zones[`p${player}:fountain`];
       const heroes = fountain.filter((id) => {
         const entity = state.entities[id];
@@ -415,6 +425,8 @@ export interface RunBotOptions {
   readonly print?: boolean;
   readonly decks?: readonly [readonly CardId[], readonly CardId[]];
   readonly heroes?: readonly [readonly CardId[], readonly CardId[]];
+  readonly deps?: ResolveDeps;
+  readonly onStep?: (state: GameState, events: readonly GameEvent[]) => void;
 }
 
 export function runBotGame(options: RunBotOptions): GameState {
@@ -429,13 +441,13 @@ export function runBotGame(options: RunBotOptions): GameState {
       state.phase === "actions"
         ? bots[state.priority].choose(
             project(state, state.priority),
-            legalActions(state, state.priority),
+            legalActions(state, state.priority, options.deps),
           )
         : automaticIntent(state);
     if (options.print) {
       console.log(`[${step}] ${JSON.stringify(intent)}`);
     }
-    const applied = applyChecked(state, intent);
+    const applied = applyChecked(state, intent, options.deps ?? DEFAULT_DEPS);
     if (applied === null) {
       if (options.print) {
         console.log(`  rejected`);
@@ -443,6 +455,7 @@ export function runBotGame(options: RunBotOptions): GameState {
       continue;
     }
     state = applied.state;
+    options.onStep?.(state, applied.events);
     if (options.print) {
       for (const event of applied.events) {
         console.log(`  ${JSON.stringify(event)}`);
@@ -490,6 +503,7 @@ async function play(args: readonly string[]): Promise<number> {
     decks,
     heroes: [PLAY_HEROES, PLAY_HEROES],
     bots: [createBot(p0, seed), createBot(p1, seed ^ 0x51ed270b)],
+    deps: pf1Deps(),
     print: true,
   });
   console.log(`over=${state.winner ?? "draw"} round=${state.round} seq=${state.seq}`);
@@ -659,15 +673,188 @@ async function replay(args: readonly string[]): Promise<number> {
 
 async function sim(args: readonly string[]): Promise<number> {
   const games = numberOf(args, "--games", Number(process.env.SIM_GAMES ?? 1_000));
-  const wins: Record<string, number> = { "0": 0, "1": 0, draw: 0 };
-  for (let index = 0; index < games; index += 1) {
-    const state = runBotGame({ seed: index + 1, rules: SIM_RULES, maxSteps: 64 });
-    wins[String(state.winner ?? "draw")] = (wins[String(state.winner ?? "draw")] ?? 0) + 1;
+  const maxSteps = numberOf(args, "--max-steps", 512);
+  const initiative = argValue(args, "--initiative") ?? "alternate";
+  if (!INITIATIVE_NAMES.includes(initiative as SimInitiative)) {
+    throw new Error(`--initiative 取值必须是 ${INITIATIVE_NAMES.join(" | ")}`);
   }
-  const report = { games, wins };
+  const preset = argValue(args, "--preset") ?? "concentrated";
+  const presetAll = args.includes("--preset-all") || argValue(args, "--presets") === "all";
+  if (preset !== "concentrated" && preset !== "spread" && preset !== "mixed") {
+    throw new Error(`--preset 取值必须是 ${PRESET_NAMES.join(" | ")}`);
+  }
+  const bundle = buildBundle({
+    cards: CARD_SOURCES,
+    enchantments: ENCHANTMENT_SOURCES,
+    createdAt: resolveCreatedAt("0"),
+  });
+  const presets = PRESET_NAMES.map((name) => [name, presetDeck(name)] as const);
+  for (const [name, constructed] of presets) {
+    try {
+      validateConstructedDeck(bundle, DEFAULT_RULES, PRESET_HEROES[0], constructed);
+    } catch (error) {
+      if (error instanceof DeckValidationError)
+        throw new Error(`预构筑 ${name} 校验失败：${error.message}`);
+      throw error;
+    }
+  }
+
+  const runMatchup = (p0: PresetName, p1: PresetName, matchupGames: number) => {
+    const decks: readonly [readonly CardId[], readonly CardId[]] = [presetDeck(p0), presetDeck(p1)];
+    const wins: Record<string, number> = { "0": 0, "1": 0, draw: 0 };
+    const rounds: number[] = [];
+    let incompleteGames = 0;
+    const perCard = new Map<
+      CardId,
+      { played: number; drawn: number; added: number; games: number; wins: number }
+    >();
+    for (let index = 0; index < matchupGames; index += 1) {
+      const seen = new Map<CardId, Set<0 | 1>>();
+      let firstStep = true;
+      let state: GameState;
+      try {
+        state = runBotGame({
+          seed: index + 1,
+          rules: { ...DEFAULT_RULES, initiative: initiative as SimInitiative },
+          decks,
+          heroes: PRESET_HEROES,
+          deps: pf1Deps(),
+          maxSteps,
+          onStep: (nextState, events) => {
+            if (firstStep) {
+              firstStep = false;
+              for (const player of [0, 1] as const) {
+                for (const id of nextState.zones[`p${player}:hand`]) {
+                  const entity = nextState.entities[id];
+                  if (entity !== undefined) {
+                    const players = seen.get(entity.cardId) ?? new Set<0 | 1>();
+                    players.add(player);
+                    seen.set(entity.cardId, players);
+                  }
+                }
+              }
+            }
+            for (const event of events) {
+              if (
+                event.name !== "card_played" &&
+                event.name !== "card_drawn" &&
+                event.name !== "card_added_to_hand"
+              ) {
+                continue;
+              }
+              const entity = nextState.entities[event.target];
+              if (entity === undefined || (entity.owner !== 0 && entity.owner !== 1)) {
+                continue;
+              }
+              const stats = perCard.get(event.cardId) ?? {
+                played: 0,
+                drawn: 0,
+                added: 0,
+                games: 0,
+                wins: 0,
+              };
+              if (event.name === "card_played") stats.played += 1;
+              if (event.name === "card_drawn") stats.drawn += 1;
+              if (event.name === "card_added_to_hand") stats.added += 1;
+              perCard.set(event.cardId, stats);
+              const players = seen.get(event.cardId) ?? new Set<0 | 1>();
+              players.add(entity.owner);
+              seen.set(event.cardId, players);
+            }
+          },
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("对局超过")) {
+          incompleteGames += 1;
+          continue;
+        }
+        throw error;
+      }
+      wins[String(state.winner ?? "draw")] = (wins[String(state.winner ?? "draw")] ?? 0) + 1;
+      rounds.push(state.round);
+      for (const [cardId, players] of seen) {
+        const stats = perCard.get(cardId) ?? { played: 0, drawn: 0, added: 0, games: 0, wins: 0 };
+        stats.games += players.size;
+        stats.wins += [...players].filter((player) => state.winner === player).length;
+        perCard.set(cardId, stats);
+      }
+    }
+    rounds.sort((a, b) => a - b);
+    const p90Round = rounds.length === 0 ? 0 : (rounds[Math.ceil(rounds.length * 0.9) - 1] ?? 0);
+    const cardIds = new Set([...decks[0], ...decks[1]]);
+    const cardReport = Object.fromEntries(
+      [...cardIds].map((cardId) => {
+        const stats = perCard.get(cardId) ?? { played: 0, drawn: 0, added: 0, games: 0, wins: 0 };
+        const copies = [
+          decks[0].filter((id) => id === cardId).length,
+          decks[1].filter((id) => id === cardId).length,
+        ] as const;
+        return [
+          cardId,
+          {
+            ...stats,
+            copies,
+            pickrate: rounds.length === 0 ? 0 : stats.games / (rounds.length * 2),
+            winrate: stats.games === 0 ? 0 : stats.wins / stats.games,
+          },
+        ];
+      }),
+    );
+    const result = {
+      p0: p0,
+      p1: p1,
+      games: matchupGames,
+      completedGames: rounds.length,
+      incompleteGames,
+      wins,
+      avgRound:
+        rounds.length === 0 ? 0 : rounds.reduce((sum, round) => sum + round, 0) / rounds.length,
+      p50Round: rounds[Math.ceil(rounds.length * 0.5) - 1] ?? 0,
+      p90Round,
+      perCard: cardReport,
+    };
+    console.log(
+      `${p0} vs ${p1}：胜率 0/1/平 ${wins["0"] ?? 0}/${wins["1"] ?? 0}/${wins.draw ?? 0}，平均局长 ${result.avgRound}，p50=${result.p50Round}，p90=${result.p90Round}`,
+    );
+    return result;
+  };
+
+  const matchupNames: readonly (readonly [PresetName, PresetName])[] = [
+    ["concentrated", "concentrated"],
+    ["spread", "spread"],
+    ["mixed", "mixed"],
+    ["concentrated", "spread"],
+    ["concentrated", "mixed"],
+    ["spread", "mixed"],
+  ];
+  const matchupGames = presetAll ? Math.max(1, Math.floor(games / 6)) : games;
+  const matchupReports = (
+    presetAll ? matchupNames : [[preset as PresetName, preset as PresetName] as const]
+  ).map(([p0, p1]) => runMatchup(p0, p1, matchupGames));
+  const first = matchupReports[0];
+  const report = {
+    games,
+    completedGames: first?.completedGames ?? 0,
+    maxSteps,
+    incompleteGames: first?.incompleteGames ?? 0,
+    incompleteReason:
+      (first?.incompleteGames ?? 0) === 0
+        ? null
+        : `有 ${first?.incompleteGames ?? 0} 局在 ${maxSteps} 步内未结束，未静默提高上限`,
+    initiative,
+    wins: first?.wins ?? { "0": 0, "1": 0, draw: 0 },
+    avgRound: first?.avgRound ?? 0,
+    p50Round: first?.p50Round ?? 0,
+    p90Round: first?.p90Round ?? 0,
+    perCard: first?.perCard ?? {},
+    ...(presetAll ? { matchups: matchupReports } : {}),
+  };
   const reportDir = resolve(import.meta.dir, "../reports/sim");
   await mkdir(reportDir, { recursive: true });
   await Bun.write(resolve(reportDir, "latest.json"), JSON.stringify(report, null, 2));
+  console.log(
+    `模拟 ${games} 局（${preset}${presetAll ? "，全部预构筑组合" : ""}），平均局长 ${report.avgRound}，p50=${report.p50Round}，p90=${report.p90Round}`,
+  );
   console.log(JSON.stringify(report));
   return 0;
 }

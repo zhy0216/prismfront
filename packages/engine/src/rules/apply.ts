@@ -270,11 +270,13 @@ function checkPlayCard(
   if (playerData(state, player).crystals < card.tags.cost) {
     return "not_enough_crystals";
   }
-  if (!isValidSlot(state, slot)) {
-    return "invalid_slot";
-  }
-  if (!isSlotEmpty(state, player, slot)) {
-    return "slot_occupied";
+  if (cards?.(card.cardId)?.kind !== "spell") {
+    if (!isValidSlot(state, slot)) {
+      return "invalid_slot";
+    }
+    if (!isSlotEmpty(state, player, slot)) {
+      return "slot_occupied";
+    }
   }
   return null;
 }
