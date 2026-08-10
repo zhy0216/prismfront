@@ -28,3 +28,4 @@ apps/client/src/generated/*
 *.log
 
 # 注意：bun.lock 是文本锁文件，**必须进版本库**（架构文档 §2.1），不要在此忽略它。
+.omo/
