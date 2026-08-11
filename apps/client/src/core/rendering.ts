@@ -15,6 +15,11 @@ export const RENDER_DENSITY = Math.min(2, Math.max(1, devicePixelRatio));
 export const RENDER_WIDTH = Math.round(DESIGN_WIDTH * RENDER_DENSITY);
 export const RENDER_HEIGHT = Math.round(DESIGN_HEIGHT * RENDER_DENSITY);
 
+// Canvas font metrics can under-report the ascent/descent of CJK glyphs,
+// especially for bold fallback fonts. Give every unboxed Text texture a small
+// vertical safety area so the first and last glyph pixels are not cropped.
+export const TEXT_SAFE_PADDING = { y: 4 } as const;
+
 /** Make a scene camera show the fixed design canvas on the denser buffer. */
 export function configureDesignCamera(scene: Scene): void {
   scene.cameras.main

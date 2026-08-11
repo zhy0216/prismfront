@@ -1,9 +1,17 @@
 import type { PlayerId } from "@prismfront/shared";
+import { CARD_FACE_HEIGHT, CARD_FACE_WIDTH } from "./card-face.ts";
 
 export const DESIGN_WIDTH = 1920;
 export const DESIGN_HEIGHT = 1080;
-export const SLOT_W = 180;
-export const SLOT_H = 170;
+
+/** 棋盘上卡牌的展示尺寸（竖版，高为长边）。 */
+export const BOARD_CARD_HEIGHT = 200;
+export const BOARD_CARD_WIDTH = BOARD_CARD_HEIGHT * (CARD_FACE_WIDTH / CARD_FACE_HEIGHT);
+
+/** 格子在卡牌四周的单侧留白：让格子是长方形、且只比卡牌大一点。 */
+const SLOT_PADDING = 15;
+export const SLOT_W = BOARD_CARD_WIDTH + SLOT_PADDING * 2;
+export const SLOT_H = BOARD_CARD_HEIGHT + SLOT_PADDING * 2;
 export const SLOT_GAP = 8;
 export const SLOT_COUNT = 9;
 export const BOARD_X0 = (DESIGN_WIDTH - (SLOT_COUNT * SLOT_W + (SLOT_COUNT - 1) * SLOT_GAP)) / 2;

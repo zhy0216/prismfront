@@ -2,7 +2,7 @@ import type { SnapshotMsg } from "@prismfront/shared";
 import { type GameObjects, Scene } from "phaser";
 import type { ClientCardData, Color } from "../core/card-face.ts";
 import { GOLDEN_HERO_COLORS, hudModel } from "../core/hud.ts";
-import { configureDesignCamera, RENDER_DENSITY } from "../core/rendering.ts";
+import { configureDesignCamera, RENDER_DENSITY, TEXT_SAFE_PADDING } from "../core/rendering.ts";
 import cardsBundle from "../generated/cards.client.json";
 import { BUS_EVENTS, MATCH_BUS } from "./match-bus.ts";
 
@@ -32,6 +32,7 @@ export class HudScene extends Scene {
       color: "#ffffff",
       fontSize: "24px",
       lineSpacing: 8,
+      padding: TEXT_SAFE_PADDING,
       resolution: RENDER_DENSITY,
       wordWrap: { width: 250, useAdvancedWrap: true },
     });
@@ -41,6 +42,7 @@ export class HudScene extends Scene {
         color: "#ffffff",
         fontSize: "24px",
         lineSpacing: 6,
+        padding: TEXT_SAFE_PADDING,
         resolution: RENDER_DENSITY,
         wordWrap: { width: 1500, useAdvancedWrap: true },
       })

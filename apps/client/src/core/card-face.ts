@@ -4,6 +4,16 @@ export const CARD_FACE_WIDTH = 240;
 export const CARD_FACE_HEIGHT = 340;
 export const CARD_FACE_RATIO = CARD_FACE_HEIGHT / CARD_FACE_WIDTH;
 
+/** Generated first-pass faction frames. The art window intentionally stays blank
+ * until the card illustration pass is ready. */
+export const CARD_TEMPLATE_ASSETS: Readonly<
+  Record<Color, { readonly key: string; readonly url: string }>
+> = {
+  red: { key: "card-template:red", url: "/assets/prismfront/card-template-red.png" },
+  green: { key: "card-template:green", url: "/assets/prismfront/card-template-green.png" },
+  blue: { key: "card-template:blue", url: "/assets/prismfront/card-template-blue.png" },
+};
+
 export interface ClientCardData {
   readonly id: string;
   readonly name: { readonly zh: string; readonly en?: string };
@@ -18,6 +28,7 @@ export interface ClientCardData {
 
 export interface CardFaceSpec {
   readonly key: string;
+  readonly template: { readonly color: Color; readonly key: string; readonly url: string };
   readonly frameColor: number;
   readonly colorDots: readonly number[];
   readonly name: string;
@@ -57,10 +68,18 @@ function hueOf(colors: readonly Color[]): number {
   return 215;
 }
 
+/** PF1 cards are mono-colour. For future fusion cards, keep the first colour as
+ * the deterministic fallback until dedicated fusion frames are generated. */
+export function cardTemplateColor(colors: readonly Color[]): Color {
+  return colors[0] ?? "blue";
+}
+
 export function cardFaceSpec(card: ClientCardData): CardFaceSpec {
   const artKey = `art:${card.id}`;
+  const templateColor = cardTemplateColor(card.colors);
   return {
     key: `card:${card.id}`,
+    template: { color: templateColor, ...CARD_TEMPLATE_ASSETS[templateColor] },
     frameColor: frameColor(card.colors),
     colorDots: card.colors.map((color) => COLORS[color] ?? COLORS.blue),
     name: card.name.zh,

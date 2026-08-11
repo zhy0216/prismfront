@@ -7,29 +7,61 @@ import type {
   Transport,
 } from "@prismfront/shared";
 import { type GameObjects, Scene } from "phaser";
-import { CARD_FACE_HEIGHT, CARD_FACE_WIDTH } from "../core/card-face.ts";
+import {
+  CARD_FACE_HEIGHT,
+  CARD_FACE_WIDTH,
+  CARD_TEMPLATE_ASSETS,
+  type ClientCardData,
+  type Color,
+  cardFaceSpec,
+} from "../core/card-face.ts";
+import { createCardFaceTexture } from "../core/card-texture.ts";
 import { Director, type RenderContext } from "../core/director.ts";
 import { IntentController } from "../core/input.ts";
 import {
   absoluteSlotToWorld,
+  BOARD_CARD_HEIGHT,
+  BOARD_CARD_WIDTH,
   beamPath,
   DESIGN_HEIGHT,
   DESIGN_WIDTH,
+  ROW_Y,
   SLOT_H,
   SLOT_W,
   worldPointToSlot,
 } from "../core/layout.ts";
-import { configureDesignCamera, RENDER_DENSITY } from "../core/rendering.ts";
+import { configureDesignCamera, RENDER_DENSITY, TEXT_SAFE_PADDING } from "../core/rendering.ts";
 import { BUS_EVENTS, MATCH_BUS } from "./match-bus.ts";
 
 const SLOT_FILL = 0x25304a;
 const SLOT_STROKE = 0x5972a5;
 const DROP_SLOT_FILL = 0x246c63;
 const DROP_SLOT_STROKE = 0x6ee7d8;
-const HAND_CARD_WIDTH = 140;
+const HAND_CARD_WIDTH = 150;
 const HAND_CARD_HEIGHT = HAND_CARD_WIDTH * (CARD_FACE_HEIGHT / CARD_FACE_WIDTH);
-const BOARD_CARD_HEIGHT = 158;
-const BOARD_CARD_WIDTH = BOARD_CARD_HEIGHT * (CARD_FACE_WIDTH / CARD_FACE_HEIGHT);
+const HAND_CARD_PITCH = HAND_CARD_WIDTH + 30;
+
+function fallbackColor(cardId: string): Color {
+  const id = cardId.toUpperCase();
+  if (id.includes("GREEN") || id.startsWith("PF1_G")) return "green";
+  if (id.includes("RED") || id.startsWith("PF1_R")) return "red";
+  return "blue";
+}
+
+function fallbackCard(
+  cardId: string,
+  tags?: { readonly atk: number; readonly health: number; readonly cost: number },
+): ClientCardData {
+  const color = fallbackColor(cardId);
+  return {
+    id: cardId,
+    name: { zh: displayCardLabel(cardId) },
+    kind: cardId.includes("HERO") ? "hero" : "minion",
+    ...(tags === undefined ? {} : { cost: tags.cost }),
+    colors: [color],
+    ...(tags === undefined ? {} : { atk: tags.atk, health: tags.health }),
+  };
+}
 
 interface DragPointer {
   readonly worldX: number;
@@ -87,7 +119,6 @@ export class MatchScene extends Scene {
   private director!: Director;
   private transport: Transport | undefined;
   private intent: IntentController | null = null;
-  private selectedHero: number | null = null;
   private authoritative: PlayerView | null = null;
   private lastSnapshotSeq = -1;
   private pendingEventSeq = -1;
@@ -138,19 +169,26 @@ export class MatchScene extends Scene {
       }
     });
     this.transport?.onMessage((message) => this.onServerMessage(message));
-    MATCH_BUS.on(BUS_EVENTS.input, (action: { kind: string; value?: number | string | null }) => {
-      if (action.kind === "pass") this.intent?.pass();
-      else if (action.kind === "mulligan") {
-        this.intent?.commitMulligan();
-      } else if (action.kind === "toggle-mulligan" && typeof action.value === "number") {
-        this.intent?.toggleMulligan(action.value);
-      } else if (action.kind === "select-hero" && typeof action.value === "number") {
-        this.selectedHero = action.value;
-      } else if (action.kind === "select-slot" && typeof action.value === "number") {
-        if (this.selectedHero !== null) this.intent?.placeHero(this.selectedHero, action.value);
-      } else if (action.kind === "deploy") this.intent?.commitDeploy();
-      else if (action.kind === "respond") this.intent?.respond(action.value ?? null);
-    });
+    MATCH_BUS.on(
+      BUS_EVENTS.input,
+      (action: { kind: string; hero?: number; value?: number | string | null }) => {
+        if (action.kind === "pass") this.intent?.pass();
+        else if (action.kind === "mulligan") {
+          this.intent?.commitMulligan();
+        } else if (action.kind === "toggle-mulligan" && typeof action.value === "number") {
+          this.intent?.toggleMulligan(action.value);
+        } else if (
+          action.kind === "deploy-place" &&
+          typeof action.hero === "number" &&
+          typeof action.value === "number"
+        ) {
+          this.intent?.placeHero(action.hero, action.value);
+        } else if (action.kind === "deploy-hover") {
+          this.highlightDeployTargets(typeof action.value === "number" ? action.value : null);
+        } else if (action.kind === "deploy") this.intent?.commitDeploy();
+        else if (action.kind === "respond") this.intent?.respond(action.value ?? null);
+      },
+    );
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) this.director.fastForward();
     });
@@ -320,9 +358,10 @@ export class MatchScene extends Scene {
         if (owner === this.viewer) this.friendlySlots.set(index, slot);
         this.boardObjects.push(
           slot,
-          this.add.text(x - 72, y - 74, String(index), {
+          this.add.text(x - SLOT_W / 2 + 14, y - SLOT_H / 2 + 8, String(index), {
             color: "#8ca4d3",
             fontSize: "18px",
+            padding: TEXT_SAFE_PADDING,
             resolution: RENDER_DENSITY,
           }),
         );
@@ -330,9 +369,10 @@ export class MatchScene extends Scene {
     }
     this.boardObjects.push(
       this.add
-        .text(DESIGN_WIDTH / 2, DESIGN_HEIGHT / 2 - 16, "PRISMFRONT · 九曜战线", {
+        .text(DESIGN_WIDTH / 2, (ROW_Y.enemy + ROW_Y.friendly) / 2, "PRISMFRONT · 九曜战线", {
           color: "#b9d3ff",
           fontSize: "30px",
+          padding: TEXT_SAFE_PADDING,
           resolution: RENDER_DENSITY,
         })
         .setOrigin(0.5),
@@ -356,26 +396,38 @@ export class MatchScene extends Scene {
         if (entity === undefined || entity.cardId === null) continue;
         const { x, y } = absoluteSlotToWorld(this.viewer, owner, index);
         const faceKey = `card:${entity.cardId}`;
-        if (!this.textures.exists(faceKey)) this.makePlaceholderFace(faceKey, entity.cardId);
+        if (!this.textures.exists(faceKey)) this.makePlaceholderFace(entity.cardId, entity.tags);
         const art = this.add
           .image(0, 0, faceKey)
           .setDisplaySize(BOARD_CARD_WIDTH, BOARD_CARD_HEIGHT);
-        const healthBadge = this.add
-          .rectangle(BOARD_CARD_WIDTH / 2 - 20, BOARD_CARD_HEIGHT / 2 - 20, 46, 28, 0x101522, 0.82)
+        const attackBadge = this.add
+          .circle(-BOARD_CARD_WIDTH / 2 + 14, BOARD_CARD_HEIGHT / 2 - 16, 13, 0x101522, 0.9)
           .setStrokeStyle(2, owner === this.viewer ? 0x8ec9ff : 0xf09aaa);
-        const stats = this.add
+        const healthBadge = this.add
+          .circle(BOARD_CARD_WIDTH / 2 - 14, BOARD_CARD_HEIGHT / 2 - 16, 13, 0x101522, 0.9)
+          .setStrokeStyle(2, owner === this.viewer ? 0x8ec9ff : 0xf09aaa);
+        const attack = this.add
+          .text(-BOARD_CARD_WIDTH / 2 + 14, BOARD_CARD_HEIGHT / 2 - 16, `${entity.tags.atk}`, {
+            color: "#f2f6ff",
+            fontSize: "17px",
+            padding: TEXT_SAFE_PADDING,
+            resolution: RENDER_DENSITY,
+          })
+          .setOrigin(0.5);
+        const health = this.add
           .text(
-            BOARD_CARD_WIDTH / 2 - 20,
-            BOARD_CARD_HEIGHT / 2 - 20,
+            BOARD_CARD_WIDTH / 2 - 14,
+            BOARD_CARD_HEIGHT / 2 - 16,
             `${entity.tags.health - entity.damage}`,
             {
               color: "#f2f6ff",
               fontSize: "17px",
+              padding: TEXT_SAFE_PADDING,
               resolution: RENDER_DENSITY,
             },
           )
           .setOrigin(0.5);
-        const container = this.add.container(x, y, [art, healthBadge, stats]);
+        const container = this.add.container(x, y, [art, attackBadge, healthBadge, attack, health]);
         this.units.set(id, container);
       }
     }
@@ -385,9 +437,9 @@ export class MatchScene extends Scene {
       const entity = id === undefined ? undefined : view.entities[id];
       if (id === undefined || entity?.cardId === null || entity === undefined) continue;
       const faceKey = `card:${entity.cardId}`;
-      if (!this.textures.exists(faceKey)) this.makePlaceholderFace(faceKey, entity.cardId);
+      if (!this.textures.exists(faceKey)) this.makePlaceholderFace(entity.cardId, entity.tags);
       const card = this.add
-        .image(400 + index * 170, 968, faceKey)
+        .image(400 + index * HAND_CARD_PITCH, 968, faceKey)
         .setDisplaySize(HAND_CARD_WIDTH, HAND_CARD_HEIGHT)
         .setInteractive({ useHandCursor: true })
         .on("pointerdown", () => this.intent?.beginCard(id));
@@ -485,34 +537,18 @@ export class MatchScene extends Scene {
     document.body.dataset.unitCount = String(this.units.size);
   }
 
-  private makePlaceholderFace(key: string, label: string): void {
-    const graphics = this.make.graphics();
-    graphics.fillStyle(0x315c8d).fillRoundedRect(0, 0, CARD_FACE_WIDTH, CARD_FACE_HEIGHT, 14);
-    graphics
-      .lineStyle(5, 0xcce7ff, 0.8)
-      .strokeRoundedRect(2, 2, CARD_FACE_WIDTH - 4, CARD_FACE_HEIGHT - 4, 14);
-    const text = this.add
-      .text(CARD_FACE_WIDTH / 2, CARD_FACE_HEIGHT / 2, displayCardLabel(label), {
-        align: "center",
-        color: "#ffffff",
-        fontSize: "22px",
-        resolution: RENDER_DENSITY,
-        wordWrap: { width: 210, useAdvancedWrap: true },
-      })
-      .setOrigin(0.5);
-    graphics.setScale(RENDER_DENSITY);
-    text
-      .setPosition((CARD_FACE_WIDTH * RENDER_DENSITY) / 2, (CARD_FACE_HEIGHT * RENDER_DENSITY) / 2)
-      .setScale(RENDER_DENSITY);
-    const texture = this.add
-      .renderTexture(0, 0, CARD_FACE_WIDTH * RENDER_DENSITY, CARD_FACE_HEIGHT * RENDER_DENSITY)
-      .setVisible(false);
-    texture.draw(graphics).draw(text);
-    texture.render();
-    texture.saveTexture(key);
-    texture.destroy();
-    text.destroy();
-    graphics.destroy();
+  private makePlaceholderFace(
+    cardId: string,
+    tags?: { readonly atk: number; readonly health: number; readonly cost: number },
+  ): void {
+    const card = fallbackCard(cardId, tags);
+    const spec = cardFaceSpec(card);
+    if (!this.textures.exists(spec.template.key)) {
+      // Boot normally loads all three. This keeps isolated MatchScene tests robust.
+      const color = CARD_TEMPLATE_ASSETS[spec.template.color];
+      throw new Error(`missing card template texture ${color.key}`);
+    }
+    createCardFaceTexture(this, spec);
   }
 
   private highlightDropTargets(card: number, hovered: number | null): void {
@@ -520,6 +556,23 @@ export class MatchScene extends Scene {
     const legalSlots = new Set(legal?.legal === true ? legal.slots : []);
     for (const [index, slot] of this.friendlySlots) {
       if (!legalSlots.has(index)) {
+        slot.setFillStyle(SLOT_FILL, 0.65).setStrokeStyle(2, SLOT_STROKE);
+        continue;
+      }
+      slot
+        .setFillStyle(DROP_SLOT_FILL, hovered === index ? 0.95 : 0.78)
+        .setStrokeStyle(hovered === index ? 5 : 3, DROP_SLOT_STROKE);
+    }
+  }
+
+  private highlightDeployTargets(hovered: number | null): void {
+    const occupied = new Set(
+      (this.view?.slots[this.viewer] ?? []).flatMap((id, index) =>
+        id === null || id === undefined ? [] : [index],
+      ),
+    );
+    for (const [index, slot] of this.friendlySlots) {
+      if (occupied.has(index)) {
         slot.setFillStyle(SLOT_FILL, 0.65).setStrokeStyle(2, SLOT_STROKE);
         continue;
       }
